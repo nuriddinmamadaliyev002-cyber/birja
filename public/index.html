@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Birja Analitika</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/chart.umd.js"></script>
+</head>
+<body>
+<div id="login" class="login hidden">
+  <form id="loginForm" class="card login-card">
+    <h1>Birja Analitika</h1>
+    <p class="muted">xarid.uzex.uz bozorini tahlil qilish tizimi</p>
+    <label>Login<input name="username" autocomplete="username" required autofocus></label>
+    <label>Parol<input name="password" type="password" autocomplete="current-password" required></label>
+    <div id="loginErr" class="err"></div>
+    <button class="btn primary" type="submit">Kirish</button>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <button id="burger" class="burger" type="button" aria-label="Menyuni ochish" aria-controls="side" aria-expanded="false">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <div id="pageTitle" class="page-title">Birja Analitika</div>
+  </header>
+  <div id="scrim" class="scrim"></div>
+  <aside class="side" id="side">
+    <div class="brand">Birja<span>Analitika</span></div>
+    <nav id="nav"></nav>
+    <div class="side-foot">
+      <div id="who" class="muted small"></div>
+      <button id="logout" class="btn ghost small">Chiqish</button>
+    </div>
+  </aside>
+  <main id="view" class="main"></main>
+</div>
+
+<div id="modal" class="modal hidden"><div class="modal-box card" id="modalBox"></div></div>
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js"></script>
+</body>
+</html>

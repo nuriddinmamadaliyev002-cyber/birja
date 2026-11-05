@@ -1,0 +1,553 @@
+'use strict';
+/* ---------- yordamchilar ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const nf = (v, d = 0) => v === null || v === undefined || isNaN(v) ? '—' : Number(v).toLocaleString('ru-RU', { maximumFractionDigits: d, minimumFractionDigits: d });
+const som = v => v === null || v === undefined ? '—' : nf(v) + ' so\'m';
+const mln = v => v == null ? '—' : v >= 1e9 ? nf(v / 1e9, 1) + ' mlrd' : v >= 1e6 ? nf(v / 1e6, 1) + ' mln' : nf(v);
+const pct = v => v == null ? '—' : nf(v, 1) + '%';
+const qs = o => Object.entries(o).filter(([, v]) => v !== '' && v != null).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+const opts = (arr, sel, first) => `${first !== undefined ? `<option value="">${esc(first)}</option>` : ''}${arr.map(v => `<option ${v == sel ? 'selected' : ''}>${esc(v)}</option>`).join('')}`;
+
+async function api(path, o = {}) {
+  const init = { method: o.method || 'GET', headers: {}, credentials: 'same-origin' };
+  if (o.json) { init.headers['content-type'] = 'application/json'; init.body = JSON.stringify(o.json); }
+  if (o.form) init.body = o.form;
+  const r = await fetch('/api' + path, init);
+  if (r.status === 401 && path !== '/login') { showLogin(); throw new Error('auth'); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Xatolik');
+  return data;
+}
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3500); }
+function modal(html, wide) { $('#modalBox').className = 'modal-box card' + (wide ? ' wide' : ''); $('#modalBox').innerHTML = html; $('#modal').classList.remove('hidden'); }
+function closeModal() { $('#modal').classList.add('hidden'); }
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+let charts = [];
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function chart(el, cfg) {
+  const c = new Chart(el, cfg); charts.push(c); return c;
+}
+function chartBase(extra = {}) {
+  const grid = css('--line'), tx = css('--muted');
+  Chart.defaults.color = tx; Chart.defaults.borderColor = grid; Chart.defaults.font.family = 'system-ui,sans-serif';
+  return { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { labels: { boxWidth: 12 } } }, ...extra };
+}
+const debounce = (f, ms = 300) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => f(...a), ms); }; };
+
+/* ---------- jadval -> karta (telefon): har bir katakka sarlavha yorlig'i qo'yadi ---------- */
+function cardify() {
+  document.querySelectorAll('table').forEach(t => {
+    const hs = [...t.querySelectorAll('thead th')].map(h => h.textContent.replace(/[▲▼]/g, '').trim());
+    t.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => {
+      if (td.dataset.k) return; td.dataset.k = '1';
+      const single = td.colSpan <= 1;
+      td.setAttribute('data-label', single ? (hs[i] || '') : '');
+      if (single && td.childNodes.length) { const w = document.createElement('div'); w.className = 'cv'; while (td.firstChild) w.appendChild(td.firstChild); td.appendChild(w); }
+    }));
+  });
+}
+let _cf = 0;
+new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); }); }).observe(document.body, { childList: true, subtree: true });
+
+/* ---------- holat ---------- */
+let ME = null, FILTERS = null, PRODUCTS = [];
+const G = { from: '', to: '' }; // umumiy sana oralig'i
+
+const PAGES = [
+  ['dashboard', 'Umumiy ko\'rinish'], ['mylots', 'Mening lotlarim'], ['lots', 'Lotlar bazasi'], ['trend', 'Narx dinamikasi'], ['margin', 'Marja kalkulyatori'],
+  ['rank', 'Raqobat va buyurtmachilar'], ['products', 'Mahsulotlarimiz'], ['settings', 'Sozlamalar'],
+];
+const canWrite = () => ME && ME.role !== 'viewer';
+
+/* ---------- auth ---------- */
+function showLogin() { setNav(false); $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); }
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault(); $('#loginErr').textContent = '';
+  const f = new FormData(e.target);
+  try { await api('/login', { method: 'POST', json: { username: f.get('username'), password: f.get('password') } }); await boot(); }
+  catch (err) { $('#loginErr').textContent = err.message; }
+});
+$('#logout').onclick = async () => { await api('/logout', { method: 'POST' }).catch(() => { }); location.hash = ''; showLogin(); };
+
+async function boot() {
+  try { ME = await api('/me'); } catch { return showLogin(); }
+  $('#login').classList.add('hidden'); $('#app').classList.remove('hidden');
+  $('#who').textContent = `${ME.full_name || ME.username} · ${ME.role}`;
+  $('#nav').innerHTML = PAGES.map(([k, t]) => k === 'mylots'
+    ? `<div class="nav-grp" id="grpMy"><a href="#mylots/new" data-k="mylots" data-g="1">${t}</a><div class="nav-sub">${MYSUBS.map(([s, l]) => `<a href="#mylots/${s}" data-k="mylots" data-s="${s}">${l}<span class="cnt" data-cnt="${s}"></span></a>`).join('')}</div></div>`
+    : `<a href="#${k}" data-k="${k}">${t}</a>`).join('');
+  await refreshMeta();
+  route();
+}
+async function refreshMeta() { [FILTERS, PRODUCTS] = await Promise.all([api('/filters'), api('/products'), refreshCounts()]); }
+async function refreshCounts() {
+  try { const c = await api('/my-lots/counts'); document.querySelectorAll('[data-cnt]').forEach(e => { const n = c[e.dataset.cnt]; e.textContent = n > 0 ? n : ''; }); } catch { }
+}
+window.addEventListener('hashchange', route);
+
+/* ---------- hamburger menyu (telefon) ---------- */
+function setNav(open) { document.body.classList.toggle('nav-open', open); $('#burger').setAttribute('aria-expanded', open); }
+$('#burger').onclick = () => setNav(!document.body.classList.contains('nav-open'));
+$('#scrim').onclick = () => setNav(false);
+$('#nav').addEventListener('click', e => { if (e.target.closest('a')) setNav(false); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') setNav(false); });
+window.matchMedia('(min-width:821px)').addEventListener('change', e => { if (e.matches) setNav(false); });
+
+function route() {
+  if (!ME) return;
+  const [k, sub0] = (location.hash.slice(1) || 'dashboard').split('?')[0].split('/');
+  const page = PAGES.find(p => p[0] === k) ? k : 'dashboard';
+  const sub = page === 'mylots' ? (ST_LABEL[sub0] ? sub0 : 'new') : '';
+  document.querySelectorAll('#nav a').forEach(a => {
+    a.classList.toggle('on', !a.dataset.g && a.dataset.k === page && (!a.dataset.s || a.dataset.s === sub));
+    a.classList.toggle('cur', !!a.dataset.g && page === 'mylots');
+  });
+  $('#grpMy').classList.toggle('open', page === 'mylots');
+  $('#pageTitle').textContent = PAGES.find(p => p[0] === page)[1] + (sub ? ' · ' + ST_LABEL[sub] : ''); setNav(false);
+  charts.forEach(c => c.destroy()); charts = [];
+  $('#view').innerHTML = '<p class="muted">Yuklanmoqda…</p>';
+  (VIEWS[page])(sub).catch(e => { if (e.message !== 'auth') $('#view').innerHTML = `<div class="card bad">Xatolik: ${esc(e.message)}</div>`; });
+}
+
+/* ---------- umumiy bloklar ---------- */
+function head(title, sub, right = '') { return `<div class="page-head"><div><h1>${esc(title)}</h1><div class="muted">${esc(sub || '')}</div></div><div>${right}</div></div>`; }
+function demoBanner() {
+  const r = FILTERS.range; if (!r || !r.demo) return '';
+  return `<div class="banner"><span><b>DEMO ma'lumot ko'rsatilmoqda</b> (${r.demo} ta lot). Raqamlar haqiqiy emas, tizimni sinash uchun. Haqiqiy lotlarni "Lotlar bazasi"dan import qiling.</span>${ME.role === 'admin' ? '<button class="btn small" id="delDemo">Demoni o\'chirish</button>' : ''}</div>`;
+}
+function bindDemo() { const b = $('#delDemo'); if (b) b.onclick = async () => { if (!confirm('Barcha demo lotlar o\'chiriladi. Davom etasizmi?')) return; const r = await api('/demo', { method: 'DELETE' }); toast(`${r.deleted} ta demo lot o'chirildi`); await refreshMeta(); route(); }; }
+function dateBar(onchange) {
+  return `<div class="bar"><label>Boshlanish<input type="date" id="gFrom" value="${G.from}"></label><label>Tugash<input type="date" id="gTo" value="${G.to}"></label>
+  <button class="btn small" id="gReset">Barcha davr</button></div>`;
+}
+function bindDateBar(reload) {
+  $('#gFrom').onchange = e => { G.from = e.target.value; reload(); };
+  $('#gTo').onchange = e => { G.to = e.target.value; reload(); };
+  $('#gReset').onclick = () => { G.from = G.to = ''; reload(); };
+}
+function emptyState() {
+  return `<div class="card"><h2>Hozircha lotlar yo'q</h2><p class="muted">Boshlash uchun "Lotlar bazasi" bo'limiga o'tib Excel/CSV faylni import qiling.</p><a class="btn primary" href="#lots">Lotlar bazasiga o'tish</a></div>`;
+}
+
+/* ---------- Dashboard ---------- */
+async function dashboard() {
+  if (!FILTERS.range.n) { $('#view').innerHTML = head('Umumiy ko\'rinish') + emptyState(); return; }
+  $('#view').innerHTML = head('Umumiy ko\'rinish', 'Birja bozorining qisqacha holati') + demoBanner() + dateBar() + '<div id="dash"></div>';
+  bindDemo(); bindDateBar(load);
+  async function load() {
+    charts.forEach(c => c.destroy()); charts = [];
+    const q = qs({ from: G.from, to: G.to });
+    const [s, tr, w, pr, rg] = await Promise.all([
+      api('/analytics/summary?' + q), api('/analytics/trend?interval=month&' + q), api('/analytics/rank?by=winner&limit=8&' + q),
+      api('/analytics/rank?by=product&limit=8&' + q), api('/analytics/rank?by=customer_region&limit=10&' + q)]);
+    $('#dash').innerHTML = `
+    <div class="grid g4">
+      <div class="card kpi"><div class="l">Lotlar soni</div><div class="v">${nf(s.lots)}</div></div>
+      <div class="card kpi"><div class="l">Taxminiy aylanma (yakuniy narx × hajm)</div><div class="v">${mln(s.turnover_est)}</div></div>
+      <div class="card kpi"><div class="l">O'rtacha takliflar soni</div><div class="v">${nf(s.avg_bids, 1)}</div></div>
+      <div class="card kpi"><div class="l">O'rtacha narx tushishi</div><div class="v">${pct(s.avg_discount)}</div></div>
+      <div class="card kpi"><div class="l">Faol g'oliblar</div><div class="v">${nf(s.winners)}</div></div>
+      <div class="card kpi"><div class="l">Buyurtmachilar</div><div class="v">${nf(s.customers)}</div></div>
+    </div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><h2>Oylar bo'yicha lotlar soni</h2><div class="chart"><canvas id="c1"></canvas></div></div>
+      <div class="card"><h2>Oylar bo'yicha o'rtacha narx tushishi (%)</h2><div class="chart"><canvas id="c2"></canvas></div></div>
+      <div class="card"><h2>Eng ko'p lot yutgan kompaniyalar</h2><div class="chart"><canvas id="c3"></canvas></div></div>
+      <div class="card"><h2>Mahsulotlar bo'yicha lotlar</h2><div class="chart"><canvas id="c4"></canvas></div></div>
+      <div class="card"><h2>Buyurtmachi hududlari</h2><div class="chart"><canvas id="c5"></canvas></div></div>
+    </div>`;
+    const C = [css('--c1'), css('--c2'), css('--c3'), css('--c4')];
+    chart($('#c1'), { type: 'bar', data: { labels: tr.map(r => r.period), datasets: [{ label: 'Lotlar', data: tr.map(r => r.n), backgroundColor: C[0] }] }, options: chartBase({ plugins: { legend: { display: false } } }) });
+    chart($('#c2'), { type: 'line', data: { labels: tr.map(r => r.period), datasets: [{ label: 'Tushish %', data: tr.map(r => r.discount), borderColor: C[1], backgroundColor: C[1], tension: .25 }] }, options: chartBase({ plugins: { legend: { display: false } } }) });
+    const hbar = (id, rows, color) => chart($(id), { type: 'bar', data: { labels: rows.map(r => r.name.length > 28 ? r.name.slice(0, 27) + '…' : r.name), datasets: [{ label: 'Lotlar', data: rows.map(r => r.lots), backgroundColor: color }] }, options: chartBase({ indexAxis: 'y', interaction: { mode: 'index', axis: 'y', intersect: false }, plugins: { legend: { display: false } } }) });
+    hbar('#c3', w, C[2]); hbar('#c4', pr, C[3]); hbar('#c5', rg, C[0]);
+  }
+  await load();
+}
+
+/* ---------- Lotlar ---------- */
+const LS = { page: 1, sort: 'date', dir: 'desc', f: {} };
+async function lots() {
+  const f = FILTERS;
+  $('#view').innerHTML = head('Lotlar bazasi', `${nf(f.range.n)} ta lot${f.range.min ? ` · ${f.range.min} — ${f.range.max}` : ''}`,
+    canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn primary" id="imp">Excel/CSV import</button>` : '') + demoBanner() + `
+  <div class="bar">
+    <label>Qidiruv<input id="fq" placeholder="mahsulot, brend, kompaniya, lot №" value="${esc(LS.f.q || '')}" style="width:240px"></label>
+    <label>Mahsulot<select id="fproduct">${opts(f.products, LS.f.product, 'Barchasi')}</select></label>
+    <label>Brend<select id="fbrand">${opts(f.brands, LS.f.brand, 'Barchasi')}</select></label>
+    <label>G'olib hududi<select id="fwinner_region">${opts(f.winner_regions, LS.f.winner_region, 'Barchasi')}</select></label>
+    <label>Buyurtmachi hududi<select id="fcustomer_region">${opts(f.customer_regions, LS.f.customer_region, 'Barchasi')}</select></label>
+    <label>Dan<input type="date" id="ffrom" value="${LS.f.from || ''}"></label><label>Gacha<input type="date" id="fto" value="${LS.f.to || ''}"></label>
+    <button class="btn small" id="freset">Tozalash</button>
+  </div>
+  <div class="bar only-m"><label>Saralash<select id="mSort">${[['date', 'Sana'], ['product', 'Mahsulot'], ['final_price', 'Yakuniy narx'], ['price_per_kg', '1 kg narxi'], ['discount', 'Narx tushishi'], ['bids', 'Takliflar']].map(([k, t]) => `<option value="${k}" ${LS.sort === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+    <button class="btn" id="mDir" style="flex:none"></button></div><div id="lotsOut"></div>`;
+  bindDemo();
+  const read = () => { LS.f = { q: $('#fq').value, product: $('#fproduct').value, brand: $('#fbrand').value, winner_region: $('#fwinner_region').value, customer_region: $('#fcustomer_region').value, from: $('#ffrom').value, to: $('#fto').value }; LS.page = 1; load(); };
+  ['fproduct', 'fbrand', 'fwinner_region', 'fcustomer_region', 'ffrom', 'fto'].forEach(i => $('#' + i).onchange = read);
+  $('#fq').oninput = debounce(read);
+  $('#freset').onclick = () => { LS.f = {}; LS.page = 1; lots(); };
+  if ($('#imp')) $('#imp').onclick = importDialog;
+  $('#mSort').onchange = e => { LS.sort = e.target.value; LS.page = 1; load(); };
+  $('#mDir').onclick = () => { LS.dir = LS.dir === 'asc' ? 'desc' : 'asc'; LS.page = 1; load(); };
+  async function load() {
+    const d = await api('/lots?' + qs({ ...LS.f, page: LS.page, sort: LS.sort, dir: LS.dir, limit: 50 }));
+    $('#mSort').value = LS.sort; $('#mDir').textContent = LS.dir === 'asc' ? '▲ o\'sish' : '▼ kamayish';
+    const th = (k, t, cls = '') => `<th class="s ${cls}" data-s="${k}">${t}${LS.sort === k ? (LS.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
+    const pages = Math.max(1, Math.ceil(d.total / d.limit));
+    $('#lotsOut').innerHTML = `<div class="tablewrap"><table><thead><tr>${th('date', 'Sana')}${th('product', 'Mahsulot')}<th>Brend</th><th>Birlik</th>
+      ${th('final_price', 'Boshl. → Yakuniy', 'num')}${th('price_per_kg', '1 kg narxi', 'num')}${th('discount', 'Tushish', 'num')}${th('bids', 'Takl.', 'num')}<th>G'olib</th><th>Buyurtmachi</th><th>Lot №</th>${canWrite() ? '<th></th>' : ''}</tr></thead><tbody>
+      ${d.rows.map(r => `<tr><td class="nowrap">${r.date}${r.is_demo ? ' <span class="pill demo">demo</span>' : ''}</td><td class="c-title">${esc(r.product)}</td><td>${esc(r.brand)}</td><td class="nowrap">${esc(r.unit)}</td>
+      <td class="num nowrap"><span class="muted">${nf(r.start_price)}</span> → <b>${nf(r.final_price)}</b></td><td class="num">${nf(r.price_per_kg)}</td>
+      <td class="num ${r.discount_pct > 20 ? 'warn' : ''}">${pct(r.discount_pct)}</td><td class="num">${r.bids ?? '—'}</td>
+      <td>${esc(r.winner)}<div class="muted small">${esc(r.winner_region)}</div></td><td>${esc(r.customer)}<div class="muted small">${esc(r.customer_region)}</div></td>
+      <td class="small muted">${esc(r.lot_no)}</td>${canWrite() ? `<td><button class="btn small danger" data-del="${r.id}">×</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="12" class="muted">Hech narsa topilmadi</td></tr>`}
+      </tbody></table></div>
+      <div class="pager"><span class="muted">${nf(d.total)} ta natija</span><button class="btn small" id="pp" ${LS.page <= 1 ? 'disabled' : ''}>←</button><span>${LS.page} / ${pages}</span><button class="btn small" id="pn" ${LS.page >= pages ? 'disabled' : ''}>→</button></div>`;
+    document.querySelectorAll('th.s').forEach(t => t.onclick = () => { const k = t.dataset.s; LS.dir = LS.sort === k && LS.dir === 'desc' ? 'asc' : 'desc'; LS.sort = k; load(); });
+    $('#pp').onclick = () => { LS.page--; load(); }; $('#pn').onclick = () => { LS.page++; load(); };
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (!confirm('Lot o\'chirilsinmi?')) return; await api('/lots/' + b.dataset.del, { method: 'DELETE' }); await refreshMeta(); load(); });
+  }
+  await load();
+}
+function importDialog() {
+  modal(`<h2>Lotlarni import qilish</h2>
+  <p class="muted">.xlsx yoki .csv fayl. Birinchi qatorda sarlavhalar bo'lishi kerak (Sana, Mahsulot nomi, Brend, O'lchov birligi, Lot raqami, ..., Yakuniy narx...). Lot raqami takrorlansa, mavjud yozuv yangilanadi, dublikat bo'lmaydi.</p>
+  <input type="file" id="impFile" accept=".xlsx,.xls,.csv"><div id="impOut" style="margin:12px 0"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeModal()">Yopish</button><button class="btn primary" id="impGo">Yuklash</button></div>`);
+  $('#impGo').onclick = async () => {
+    const file = $('#impFile').files[0]; if (!file) return toast('Fayl tanlang');
+    const fd = new FormData(); fd.append('file', file); $('#impOut').textContent = 'Yuklanmoqda…';
+    try {
+      const r = await api('/lots/import', { method: 'POST', form: fd });
+      $('#impOut').innerHTML = `<div class="bignote good">Yangi: <b>${r.inserted}</b> · Yangilandi: <b>${r.updated}</b> · O'tkazib yuborildi: <b>${r.skipped}</b></div>${r.errors.length ? `<ul class="small bad">${r.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}`;
+      await refreshMeta(); setTimeout(() => { if (location.hash === '#lots') lots(); }, 100);
+    } catch (e) { $('#impOut').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+  };
+}
+window.closeModal = closeModal;
+
+/* ---------- Narx dinamikasi ---------- */
+const TS = { own: '', keywords: '', product: '', interval: 'month', region: '' };
+async function trend() {
+  if (!FILTERS.range.n) { $('#view').innerHTML = head('Narx dinamikasi') + emptyState(); return; }
+  $('#view').innerHTML = head('Narx dinamikasi', '1 kg (yoki 1 litr) ga keltirilgan narx: turli qadoqlar adolatli solishtiriladi') + demoBanner() + `
+  <div class="bar">
+    <label>Bizning mahsulot (solishtirish uchun)<select id="tOwn"><option value="">— tanlanmagan —</option>${PRODUCTS.map(p => `<option value="${p.id}" ${TS.own == p.id ? 'selected' : ''}>${esc(p.name)} (${esc(p.unit)})</option>`).join('')}</select></label>
+    <label>Birjadagi mahsulot<select id="tProd">${opts(FILTERS.products, TS.product, 'Barchasi')}</select></label>
+    <label>Kalit so'z<input id="tKw" value="${esc(TS.keywords)}" placeholder="masalan: kley" style="width:150px"></label>
+    <label>G'olib hududi<select id="tReg">${opts(FILTERS.winner_regions, TS.region, 'Barchasi')}</select></label>
+    <label>Davr<select id="tInt"><option value="month">Oylik</option><option value="week" ${TS.interval === 'week' ? 'selected' : ''}>Haftalik</option><option value="day" ${TS.interval === 'day' ? 'selected' : ''}>Kunlik</option></select></label>
+  </div>${dateBar()}<div class="card"><div class="chart" style="height:360px"><canvas id="tc"></canvas></div></div><div id="tt" style="margin-top:14px"></div>`;
+  bindDemo();
+  const read = () => { TS.own = $('#tOwn').value; TS.product = $('#tProd').value; TS.keywords = $('#tKw').value; TS.region = $('#tReg').value; TS.interval = $('#tInt').value; load(); };
+  $('#tOwn').onchange = () => { const p = PRODUCTS.find(x => x.id == $('#tOwn').value); if (p) $('#tKw').value = p.keywords || ''; read(); };
+  ['tProd', 'tReg', 'tInt'].forEach(i => $('#' + i).onchange = read); $('#tKw').oninput = debounce(read);
+  bindDateBar(load);
+  async function load() {
+    charts.forEach(c => c.destroy()); charts = [];
+    const rows = await api('/analytics/trend?' + qs({ interval: TS.interval, product: TS.product, keywords: TS.keywords, winner_region: TS.region, from: G.from, to: G.to }));
+    const own = PRODUCTS.find(p => p.id == TS.own); const costKg = own && own.pack_kg && own.cost != null ? own.cost / own.pack_kg : null;
+    const labels = rows.map(r => r.period), ds = [
+      { label: 'O\'rtacha', data: rows.map(r => r.avg), borderColor: css('--c1'), backgroundColor: css('--c1'), tension: .2 },
+      { label: 'Eng past', data: rows.map(r => r.min), borderColor: css('--c3'), borderDash: [4, 3], pointRadius: 0 },
+      { label: 'Eng yuqori', data: rows.map(r => r.max), borderColor: css('--c4'), borderDash: [4, 3], pointRadius: 0 }];
+    if (costKg) ds.push({ label: `Bizning tan narx (${nf(costKg)})`, data: labels.map(() => costKg), borderColor: css('--bad'), borderWidth: 2, pointRadius: 0 });
+    chart($('#tc'), { type: 'line', data: { labels, datasets: ds }, options: chartBase({ scales: { y: { title: { display: true, text: 'so\'m / kg' } } } }) });
+    $('#tt').innerHTML = rows.length ? `<div class="tablewrap"><table><thead><tr><th>Davr</th><th class="num">Lotlar</th><th class="num">O'rtacha</th><th class="num">Eng past</th><th class="num">Eng yuqori</th><th class="num">Takl.</th><th class="num">Tushish</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td class="c-title">${r.period}</td><td class="num">${r.n}</td><td class="num">${nf(r.avg)}</td><td class="num">${nf(r.min)}</td><td class="num">${nf(r.max)}</td><td class="num">${nf(r.avg_bids, 1)}</td><td class="num">${pct(r.discount)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card muted">Tanlangan filtr bo\'yicha ma\'lumot yo\'q (yoki qadoq hajmi aniqlanmagan).</div>';
+  }
+  await load();
+}
+
+/* ---------- Marja kalkulyatori ---------- */
+const MS = { id: '', keywords: '' };
+async function margin() {
+  if (!PRODUCTS.length) { $('#view').innerHTML = head('Marja kalkulyatori') + '<div class="card">Avval "Mahsulotlarimiz" bo\'limida mahsulot qo\'shing.</div>'; return; }
+  if (!MS.id) MS.id = PRODUCTS[0].id;
+  $('#view').innerHTML = head('Marja kalkulyatori', 'Bizning tan narxni birja narxlari bilan solishtirish va ishtirok narxini hisoblash') + demoBanner() + `
+  <div class="bar"><label>Bizning mahsulot<select id="mProd">${PRODUCTS.map(p => `<option value="${p.id}" ${MS.id == p.id ? 'selected' : ''}>${esc(p.name)} (${esc(p.unit)})</option>`).join('')}</select></label>
+  <label>Birja lotlarini moslash (kalit so'zlar, vergul bilan)<input id="mKw" style="width:260px"></label></div>
+  <div id="mMarket"></div>
+  <div class="card" style="margin-top:14px"><h2>Lot uchun hisob-kitob</h2><div class="formgrid" id="calc"></div><div id="calcOut" style="margin-top:14px"></div></div>`;
+  bindDemo();
+  const prod = () => PRODUCTS.find(p => p.id == MS.id);
+  $('#mKw').value = MS.keywords || prod().keywords || '';
+  $('#mProd').onchange = () => { MS.id = $('#mProd').value; MS.keywords = ''; margin(); };
+  $('#mKw').oninput = debounce(() => { MS.keywords = $('#mKw').value; loadMarket(); });
+  const p = prod();
+  $('#calc').innerHTML = [
+    ['cStart', 'Lotning boshlang\'ich narxi (1 birlik, so\'m)', ''], ['cQty', 'Miqdor (birlik soni)', 100], ['cKg', '1 birlik necha kg', p.pack_kg || ''],
+    ['cCost', 'Bizning tan narx (1 birlik)', p.cost ?? ''], ['cExtra', 'Qo\'shimcha xarajat (logistika, kafolat — 1 birlikka)', 0], ['cTarget', 'Maqsad marja (%)', 15], ['cBid', 'Taklif qilinadigan narx (1 birlik)', '']]
+    .map(([id, l, v]) => `<label>${l}<input type="number" id="${id}" value="${v}" step="any"></label>`).join('');
+  const calc = () => {
+    const g = id => parseFloat($('#' + id).value) || 0;
+    const cost = g('cCost') + g('cExtra'), bid = g('cBid'), qty = g('cQty'), kg = g('cKg'), start = g('cStart'), tm = g('cTarget') / 100;
+    const minBid = tm < 1 ? cost / (1 - tm) : NaN;
+    let h = `<div class="grid g4"><div class="card kpi"><div class="l">To'liq tannarx (1 birlik)</div><div class="v">${som(cost)}</div>${kg ? `<div class="muted small">${nf(cost / kg)} so'm/kg</div>` : ''}</div>
+    <div class="card kpi"><div class="l">Zararsiz narx</div><div class="v">${som(cost)}</div></div>
+    <div class="card kpi"><div class="l">Maqsad marja uchun minimal narx</div><div class="v">${som(minBid)}</div>${start ? `<div class="muted small">boshl. narxdan ${pct((start - minBid) * 100 / start)} past</div>` : ''}</div>`;
+    if (bid) {
+      const profit = bid - cost, m = bid ? profit * 100 / bid : 0;
+      h += `<div class="card kpi"><div class="l">Taklif narxida marja</div><div class="v ${profit < 0 ? 'bad' : m < g('cTarget') ? 'warn' : 'good'}">${pct(m)}</div><div class="muted small">1 birlikka ${som(profit)} · jami ${som(profit * qty)}</div></div>`;
+    }
+    h += '</div>';
+    if (start && minBid > start) h += `<div class="bignote bad" style="margin-top:10px">Maqsad marjaga lotning boshlang'ich narxi ham yetmaydi (${som(start)} &lt; ${som(minBid)}). Bu lotda ishtirok etish maqsadga muvofiq emas.</div>`;
+    else if (start && cost > start * 0.0 && minBid <= start) h += `<div class="bignote" style="margin-top:10px">Maqsad marja saqlanadi, agar narx <b>${pct((start - minBid) * 100 / start)}</b> dan ko'proq tushmasa.</div>`;
+    $('#calcOut').innerHTML = h;
+  };
+  document.querySelectorAll('#calc input').forEach(i => i.oninput = calc); calc();
+  async function loadMarket() {
+    const m = await api('/analytics/margin?' + qs({ product_id: MS.id, keywords: MS.keywords || $('#mKw').value, from: G.from, to: G.to }));
+    if (!m.matched) { $('#mMarket').innerHTML = `<div class="card"><h2>Birja bilan solishtirish</h2><p class="muted">${m.note || 'Kalit so\'zlarga mos lot topilmadi.'} Kalit so'zlarni o'zgartiring yoki lotlarni import qiling.</p></div>`; return; }
+    const cost = m.cost_per_kg, lo = Math.min(m.min, cost ?? m.min), hi = Math.max(m.max, cost ?? m.max, m.price_per_kg ?? 0), pos = v => ((v - lo) / (hi - lo || 1) * 100).toFixed(2) + '%';
+    const mk = (v, color, label, top = 0) => v == null ? '' : `<div class="mk ${(v - lo) / (hi - lo || 1) > 0.8 ? 'r' : ''}" style="left:${pos(v)};background:${color}"><i style="color:${color};top:${top}px">${label}</i></div>`;
+    const diff = cost != null ? (m.median - cost) * 100 / m.median : null;
+    $('#mMarket').innerHTML = `<div class="card"><h2>Birja narxlari (so'm/kg) — ${nf(m.matched)} ta lot</h2>
+      <div class="grid g4"><div class="card kpi"><div class="l">Bizning tan narx</div><div class="v">${nf(cost)}</div><div class="muted small">so'm/kg</div></div>
+      <div class="card kpi"><div class="l">Birja mediana narxi</div><div class="v">${nf(m.median)}</div><div class="muted small">o'rtacha ${nf(m.avg)}</div></div>
+      <div class="card kpi"><div class="l">Medianada marja</div><div class="v ${diff < 0 ? 'bad' : diff < 10 ? 'warn' : 'good'}">${pct(diff)}</div></div>
+      <div class="card kpi"><div class="l">Lotlarning qancha qismi tan narxdan yuqori</div><div class="v">${pct(m.profitable_share)}</div></div></div>
+      <div class="range"><div class="track"></div><div class="iqr" style="left:${pos(m.p25)};width:calc(${pos(m.p75)} - ${pos(m.p25)})"></div>
+      ${mk(m.min, css('--muted'), 'min ' + nf(m.min), 30)}${mk(m.max, css('--muted'), 'max ' + nf(m.max), 30)}${mk(m.median, css('--accent'), 'mediana ' + nf(m.median), -14)}${mk(cost, css('--bad'), 'tan narx ' + nf(cost), 30)}</div>
+      <p class="muted small">Ko'k to'rtburchak: lotlarning o'rta 50% qismi (25–75 persentil). Qizil chiziq: bizning tan narx. ${cost != null && m.profitable_share < 50 ? '<b class="bad">Lotlarning yarmidan ko\'pi tan narxdan past narxda yopilgan.</b>' : ''}</p></div>`;
+  }
+  await loadMarket();
+}
+
+/* ---------- Reyting ---------- */
+const RS = { by: 'winner' };
+async function rank() {
+  if (!FILTERS.range.n) { $('#view').innerHTML = head('Raqobat va buyurtmachilar') + emptyState(); return; }
+  const tabs = [['winner', 'G\'oliblar (raqobatchilar)'], ['customer', 'Buyurtmachilar'], ['brand', 'Brendlar'], ['product', 'Mahsulotlar'], ['customer_region', 'Buyurtmachi hududlari'], ['winner_region', 'G\'olib hududlari']];
+  $('#view').innerHTML = head('Raqobat va buyurtmachilar', 'Kim nimani yutayapti, kim nimani sotib olayapti') + demoBanner() + dateBar() +
+    `<div class="tabs">${tabs.map(([k, t]) => `<div class="tab ${RS.by === k ? 'on' : ''}" data-k="${k}">${t}</div>`).join('')}</div><div id="rk"></div>`;
+  bindDemo(); bindDateBar(load);
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => { RS.by = t.dataset.k; rank(); });
+  async function load() {
+    const rows = await api('/analytics/rank?' + qs({ by: RS.by, limit: 100, from: G.from, to: G.to }));
+    const clickable = RS.by === 'winner' || RS.by === 'customer';
+    $('#rk').innerHTML = `<div class="tablewrap"><table><thead><tr><th>#</th><th>Nomi</th><th class="num">Lotlar</th><th class="num">Ulush</th><th class="num">Taxm. aylanma</th><th class="num">O'rt. 1 kg narx</th><th class="num">O'rt. takl.</th><th class="num">Tushish</th><th class="num">Mahsulot turi</th><th>Oxirgi lot</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr class="${clickable ? 'click' : ''}" data-n="${esc(r.name)}"><td class="muted c-hide">${i + 1}</td><td class="c-title">${i + 1}. ${esc(r.name)}</td><td class="num"><b>${r.lots}</b></td><td class="num">${pct(r.share)}</td><td class="num">${mln(r.turnover_est)}</td><td class="num">${nf(r.avg_ppk)}</td><td class="num">${nf(r.avg_bids, 1)}</td><td class="num">${pct(r.avg_discount)}</td><td class="num">${r.products}</td><td class="nowrap">${r.last_date}</td></tr>`).join('')}</tbody></table></div>
+    ${clickable ? '<p class="muted small">Tafsilot uchun qatorni bosing.</p>' : ''}`;
+    if (clickable) document.querySelectorAll('tr.click').forEach(tr => tr.onclick = () => entity(tr.dataset.n));
+  }
+  async function entity(name) {
+    const role = RS.by === 'customer' ? 'customer' : 'winner';
+    const d = await api('/analytics/entity?' + qs({ role, name, from: G.from, to: G.to }));
+    modal(`<h2>${esc(name)}</h2><p class="muted">${role === 'winner' ? 'Yutgan lotlar' : 'Sotib olgan mahsulotlar'}</p>
+      <table><thead><tr><th>Mahsulot</th><th class="num">Lotlar</th><th class="num">O'rt. 1 kg</th><th class="num">Eng past 1 kg</th></tr></thead><tbody>
+      ${d.byProduct.map(r => `<tr><td class="c-title">${esc(r.product)}</td><td class="num">${r.lots}</td><td class="num">${nf(r.avg_ppk)}</td><td class="num">${nf(r.min_ppk)}</td></tr>`).join('')}</tbody></table>
+      <h3 style="margin-top:14px">Oylar bo'yicha</h3><div>${d.byMonth.map(m => `<span class="pill" style="margin:2px">${m.period}: ${m.lots}</span>`).join('')}</div>
+      <div style="text-align:right;margin-top:14px"><button class="btn" onclick="closeModal()">Yopish</button></div>`, true);
+  }
+  await load();
+}
+
+/* ---------- Mahsulotlar ---------- */
+async function products() {
+  await refreshMeta();
+  $('#view').innerHTML = head('Mahsulotlarimiz', 'USTA-TRADE mahsulotlari: tan narx, sotuv narxi va birja bilan moslash kalit so\'zlari', canWrite() ? '<button class="btn primary" id="addP">+ Mahsulot</button>' : '') + `
+  <div class="tablewrap"><table><thead><tr><th>Toifa</th><th>Nomi</th><th>Birlik</th><th class="num">Tan narx</th><th class="num">1 kg tan narx</th><th class="num">Sotuv narxi</th><th class="num">Marja</th><th class="num">Milliy do'kon</th><th>Kalit so'zlar</th><th></th></tr></thead><tbody>
+  ${PRODUCTS.map(p => { const m = p.cost != null && p.price ? (p.price - p.cost) * 100 / p.price : null; return `<tr><td>${esc(p.category)}</td><td class="c-title">${esc(p.name)}</td><td>${esc(p.unit)}</td><td class="num">${nf(p.cost)}</td><td class="num">${p.pack_kg && p.cost != null ? nf(p.cost / p.pack_kg) : '—'}</td><td class="num">${nf(p.price)}</td>
+  <td class="num ${m < 0 ? 'bad' : m < 15 ? 'warn' : ''}">${pct(m)}</td><td class="num">${p.price ? nf(p.price * (p.store_markup || 1.4)) : '—'}</td><td class="small muted">${esc(p.keywords)}</td>
+  <td class="nowrap">${canWrite() ? `<button class="btn small" data-e="${p.id}">✎</button> <button class="btn small danger" data-d="${p.id}">×</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
+  <p class="muted small">Marja = (sotuv narxi − tan narx) / sotuv narxi. Qizil: zarar, sariq: 15% dan past.</p>`;
+  const form = p => modal(`<h2>${p ? 'Mahsulotni tahrirlash' : 'Yangi mahsulot'}</h2><div class="formgrid">
+    ${[['category', 'Toifa'], ['name', 'Nomi'], ['unit', 'Birlik (masalan: 1 ta qopda 25 kg)'], ['cost', 'Tan narx (1 birlik)'], ['price', 'Sotuv narxi'], ['store_markup', "Milliy do'kon koeffitsiyenti"], ['cert_fee', "Sertifikat to'lovi"], ['keywords', 'Kalit so\'zlar (vergul bilan)']]
+      .map(([k, l]) => `<label>${l}<input id="p_${k}" value="${esc(p ? p[k] : k === 'store_markup' ? 1.4 : '')}"></label>`).join('')}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal()">Bekor</button><button class="btn primary" id="pSave">Saqlash</button></div>`);
+  if ($('#addP')) $('#addP').onclick = () => { form(null); $('#pSave').onclick = () => save(null); };
+  document.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { const p = PRODUCTS.find(x => x.id == b.dataset.e); form(p); $('#pSave').onclick = () => save(p.id); });
+  document.querySelectorAll('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('O\'chirilsinmi?')) return; await api('/products/' + b.dataset.d, { method: 'DELETE' }); products(); });
+  async function save(id) {
+    const g = k => $('#p_' + k).value.trim(), n = k => g(k) === '' ? null : parseFloat(g(k).replace(/\s/g, '').replace(',', '.'));
+    const body = { category: g('category'), name: g('name'), unit: g('unit'), cost: n('cost'), price: n('price'), store_markup: n('store_markup') || 1.4, cert_fee: n('cert_fee'), keywords: g('keywords') };
+    try { await api(id ? '/products/' + id : '/products', { method: id ? 'PUT' : 'POST', json: body }); closeModal(); products(); } catch (e) { toast(e.message); }
+  }
+}
+
+/* ---------- Mening lotlarim ---------- */
+const MYSUBS = [['new', 'Yangi'], ['won', "G'olib bo'lingan"], ['lost', 'Yutqazilgan'], ['rejected', 'Rad etilgan']];
+const ST_LABEL = Object.fromEntries(MYSUBS);
+const stPill = s => `<span class="pill st-${s}">${esc(ST_LABEL[s] || s)}</span>`;
+const dtf = v => { if (!v) return '—'; const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/); return m ? `${m[3]}.${m[2]}.${m[1]}${m[4] ? ' ' + m[4] + ':' + m[5] : ''}` : esc(v); };
+const dtf2 = v => { const t = dtf(v); const i = t.indexOf(' '); return i < 0 ? t : `${t.slice(0, i)}<div class="muted small">${t.slice(i + 1)}</div>`; };
+const MLS = { sub: '', q: '', transfer: '', page: 1 };
+const TRANSFER_LABEL = { pending: "O'tkazilmagan", paid: "O'tkazildi" };
+
+async function mylots(sub) {
+  sub = ST_LABEL[sub] ? sub : 'new';
+  if (MLS.sub !== sub) Object.assign(MLS, { sub, q: '', transfer: '', page: 1 });
+  const st = await api('/my-lots/stats'), w = canWrite();
+  const kpi = (l, v, cls = '', extra = '') => `<div class="card kpi"><div class="l">${l}</div><div class="v ${cls}">${v}</div>${extra}</div>`;
+  const wr = st.win_rate == null ? '—' : pct(st.win_rate), left = st.due_total - st.paid_total;
+  const cards = {
+    new: [kpi('Faol lotlar', nf(st.n_new)), kpi('24 soatda tugaydi', nf(st.ending_soon), st.ending_soon ? 'warn' : ''),
+      kpi("G'alaba foizi", wr, '', `<div class="muted small">${st.n_won} yutgan / ${st.n_lost} yutqazgan</div>`), kpi('Rad etilgan', nf(st.n_rejected))],
+    won: [kpi("G'olib lotlar", nf(st.n_won)), kpi("Jami o'tkazilishi kerak", som(st.due_total)), kpi("O'tkazildi", som(st.paid_total), 'good'),
+      kpi('Qoldiq', som(left), left > 0 ? 'warn' : '', `<div class="muted small">${st.unpaid_n} ta lot o'tkazilmagan</div>`)],
+    lost: [kpi('Yutqazilgan', nf(st.n_lost)), kpi("G'alaba foizi", wr)],
+    rejected: [kpi('Rad etilgan', nf(st.n_rejected))],
+  }[sub];
+  $('#view').innerHTML = head('Mening lotlarim — ' + ST_LABEL[sub], "O'zimiz ishtirok etgan lotlar",
+    `<button class="btn" id="mlExp">Excel'ga export</button> ` + (w ? `<a class="btn small" href="/api/my-lots/template">Shablon (.xlsx)</a> <button class="btn" id="mlImp">Excel import</button> <button class="btn primary" id="mlAdd">+ Yangi lot</button>` : '')) +
+    `<div class="grid g4">${cards.join('')}</div>
+    <div class="bar" style="margin-top:14px"><label>Qidiruv<input id="mlQ" placeholder="tovar, marka, lot №, shartnoma" value="${esc(MLS.q)}" style="width:240px"></label>
+    ${sub === 'won' ? `<label>O'tkazma<select id="mlT"><option value="">Barchasi</option><option value="pending" ${MLS.transfer === 'pending' ? 'selected' : ''}>O'tkazilmagan</option><option value="paid" ${MLS.transfer === 'paid' ? 'selected' : ''}>O'tkazildi</option></select></label>` : ''}</div>
+    <div id="mlOut"></div>`;
+  const again = () => { refreshCounts(); mylots(sub); };
+  $('#mlExp').onclick = () => { location.href = '/api/my-lots/export?' + qs({ status: sub, q: MLS.q, transfer: sub === 'won' ? MLS.transfer : '' }); };   // joriy filtr bo'yicha
+  if (w) { $('#mlAdd').onclick = () => lotForm(null, sub, again); $('#mlImp').onclick = () => mlImportDialog(again); }
+  $('#mlQ').oninput = debounce(() => { MLS.q = $('#mlQ').value; MLS.page = 1; load(); });
+  if ($('#mlT')) $('#mlT').onchange = () => { MLS.transfer = $('#mlT').value; MLS.page = 1; load(); };
+
+  async function load() {
+    const d = await api('/my-lots?' + qs({ status: sub, q: MLS.q, transfer: sub === 'won' ? MLS.transfer : '', page: MLS.page, sort: 'starts_at', dir: 'desc', limit: 50 }));
+    const pages = Math.max(1, Math.ceil(d.total / d.limit));
+    const extraTh = {
+      new: '<th>Status</th>',
+      won: `<th class="num">Yakuniy narx</th><th>Shartnoma</th><th class="num">O'tkazilishi kerak</th><th>O'tkazildi</th>`,
+      lost: `<th class="num">Bizning taklif</th><th class="num">G'olib narxi</th><th>G'olib kompaniya</th>`,
+      rejected: '<th>Rad etish sababi</th>' }[sub];
+    const hasSpecs = d.rows.some(r => r.specs);   // bo'sh "Xususiyatlari" ustuni joy egallamasin
+    const rowHtml = (r, i) => {
+      const left = r.ends_at ? new Date(r.ends_at.replace(' ', 'T')) - Date.now() : null;
+      const soon = sub === 'new' && left !== null && left > 0 && left < 864e5, late = sub === 'new' && left !== null && left <= 0;
+      const extra = {
+        new: `<td>${stPill('new')}${soon ? ' <span class="pill st-rejected">tez tugaydi</span>' : late ? ' <span class="pill st-lost">tugagan</span>' : ''}</td>`,
+        won: `<td class="num">${r.win_price != null ? nf(r.win_price) : '—'}</td>
+          <td>${r.contract_no ? esc(r.contract_no) + '<br>' : ''}<a href="#" data-edit="${r.id}">PDF (${r.files_count})</a></td>
+          <td class="num nowrap">${r.amount_due != null ? nf(r.amount_due) + ' UZS' : '—'}</td>
+          <td>${w ? `<select class="tr tr-${r.transfer_status}" data-tr="${r.id}">${Object.entries(TRANSFER_LABEL).map(([k, t]) => `<option value="${k}" ${r.transfer_status === k ? 'selected' : ''}>${t}</option>`).join('')}</select>`
+            : `<span class="tr-${r.transfer_status}">${TRANSFER_LABEL[r.transfer_status]}</span>`}${r.transferred_at ? `<div class="muted small">${dtf(r.transferred_at)}</div>` : ''}</td>`,
+        lost: `<td class="num">${r.our_bid != null ? nf(r.our_bid) : '—'}</td><td class="num">${r.win_price != null ? nf(r.win_price) : '—'}</td><td>${esc(r.winner_name) || '—'}</td>`,
+        rejected: `<td>${esc(r.reject_reason) || '—'}</td>`,
+      }[sub];
+      return `<tr><td class="muted c-hide">${(d.page - 1) * d.limit + i + 1}</td><td class="small">${esc(r.product_no) || '—'}</td><td>${esc(r.lot_no)}</td>
+        <td class="c-title">${esc(r.product)}${r.brand ? `<div class="muted small">markasi: ${esc(r.brand)}</div>` : ''}</td>
+        <td class="num">${nf(r.quantity)}</td>${hasSpecs ? `<td class="small">${esc(r.specs) || '—'}</td>` : ''}<td class="num nowrap">${r.start_price != null ? nf(r.start_price) + ' UZS' : '—'}</td>
+        <td class="nowrap">${dtf2(r.starts_at)}</td><td class="nowrap ${soon ? 'warn' : late ? 'bad' : ''}">${dtf2(r.ends_at)}</td>${extra}
+        <td class="act">${w && sub === 'new' ? `<button class="btn small" data-q="won:${r.id}">G'olib</button><button class="btn small" data-q="lost:${r.id}">Yutqazdi</button><button class="btn small" data-q="rejected:${r.id}">Rad</button>` : ''}
+          <button class="btn small" data-edit="${r.id}">${w ? '✎' : "Ko'rish"}</button>${w ? `<button class="btn small danger" data-del="${r.id}">×</button>` : ''}</td></tr>`;
+    };
+    $('#mlOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>№</th><th>Tovar №</th><th>Lot №</th><th>Tovar nomi</th><th class="num">Miqdori</th>${hasSpecs ? '<th>Xususiyatlari</th>' : ''}<th class="num">Boshlang'ich narxi</th><th>Boshlanish</th><th>Tugash</th>${extraTh}<th></th></tr></thead><tbody>
+      ${d.rows.map(rowHtml).join('') || `<tr><td colspan="14" class="muted">Bu bo'limda lot yo'q</td></tr>`}</tbody></table></div>
+      <div class="pager"><span class="muted">${nf(d.total)} ta lot</span><button class="btn small" id="mlPp" ${MLS.page <= 1 ? 'disabled' : ''}>←</button><span>${MLS.page} / ${pages}</span><button class="btn small" id="mlPn" ${MLS.page >= pages ? 'disabled' : ''}>→</button></div>`;
+    $('#mlPp').onclick = () => { MLS.page--; load(); }; $('#mlPn').onclick = () => { MLS.page++; load(); };
+    document.querySelectorAll('[data-edit]').forEach(b => b.onclick = e => { e.preventDefault(); lotForm(+b.dataset.edit, null, again); });
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+      if (!confirm("Lot va uning PDF fayllari o'chirilsinmi?")) return;
+      try { await api('/my-lots/' + b.dataset.del, { method: 'DELETE' }); again(); } catch (e) { toast(e.message); }
+    });
+    document.querySelectorAll('[data-tr]').forEach(sel => sel.onchange = async () => {
+      try { await api('/my-lots/' + sel.dataset.tr, { method: 'PATCH', json: { transfer_status: sel.value } }); toast(TRANSFER_LABEL[sel.value]); again(); }
+      catch (e) { toast(e.message); }
+    });
+    document.querySelectorAll('[data-q]').forEach(b => b.onclick = async () => {   // tezkor natija: G'olib / Yutqazdi / Rad -> tafsilot oynasi ochiladi
+      const [status, id] = b.dataset.q.split(':');
+      try { await api('/my-lots/' + id, { method: 'PATCH', json: { status } }); again(); lotForm(+id, null, again); } catch (e) { toast(e.message); }
+    });
+  }
+  await load();
+}
+
+async function lotForm(id, preset, onDone) {
+  const ro = !canWrite();
+  let L = { status: ST_LABEL[preset] ? preset : 'new', transfer_status: 'pending', files: [] };
+  if (id) { try { L = await api('/my-lots/' + id); } catch (e) { return toast(e.message); } }
+  const tl = x => x ? String(x).replace(' ', 'T').slice(0, 16) : '';
+  const f = (k, label, type = 'text', extra = '') => `<label>${label}<input id="m_${k}" type="${type}" value="${esc(type === 'datetime-local' ? tl(L[k]) : L[k] ?? '')}" ${extra}></label>`;
+  modal(`<h2>${id ? (ro ? "Lot ma'lumoti" : 'Lotni tahrirlash') : 'Yangi lot'}</h2><fieldset ${ro ? 'disabled' : ''}>
+    <div class="formgrid">${f('lot_no', 'Lot №')}${f('product_no', 'Tovar №')}${f('product', 'Tovar nomi')}${f('brand', 'Markasi')}${f('quantity', 'Miqdori', 'number', 'step="any"')}${f('specs', 'Tovarning xususiyatlari')}
+      ${f('start_price', "Boshlang'ich narx (so'm)", 'number', 'step="any"')}${f('starts_at', 'Boshlanish sanasi', 'datetime-local')}${f('ends_at', 'Tugash sanasi', 'datetime-local')}
+      <label>Holati<select id="m_status">${MYSUBS.map(([k, t]) => `<option value="${k}" ${L.status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
+    <div id="secBid" class="formgrid sec">${f('our_bid', 'Bizning taklif narxi', 'number', 'step="any"')}<label><span id="lblWin"></span><input id="m_win_price" type="number" step="any" value="${esc(L.win_price ?? '')}"></label>
+      <span id="wrapWinner">${f('winner_name', "G'olib kompaniya")}</span></div>
+    <div id="secRej" class="sec"><label>Rad etish sababi<textarea id="m_reject_reason" rows="2">${esc(L.reject_reason ?? '')}</textarea></label></div>
+    <div id="secWon" class="formgrid sec">${f('contract_no', 'Shartnoma raqami')}${f('contract_date', 'Shartnoma sanasi', 'date')}${f('amount_due', "O'tkazib berilishi kerak summa (so'm)", 'number', 'step="any"')}
+      <label>O'tkazma holati<select id="m_transfer_status">${Object.entries(TRANSFER_LABEL).map(([k, t]) => `<option value="${k}" ${L.transfer_status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <span id="wrapTdate">${f('transferred_at', "O'tkazilgan sana", 'date')}</span></div>
+    <label class="sec">Izoh<textarea id="m_notes" rows="2">${esc(L.notes ?? '')}</textarea></label>
+    <div id="secFiles" class="sec"><h3>Shartnoma PDF lari</h3><div id="fileList"></div>
+      ${ro ? '' : id ? `<div class="filebar"><input type="file" id="m_files" accept="application/pdf,.pdf" multiple><button class="btn" id="fUp" type="button">Yuklash</button></div>`
+        : '<p class="muted small">PDF fayllarni lot saqlangandan keyin qo\'shasiz.</p>'}</div></fieldset>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">${ro ? 'Yopish' : 'Bekor'}</button>${ro ? '' : '<button class="btn primary" type="button" id="mSave">Saqlash</button>'}</div>`, true);
+  const show = (sel, on) => $(sel).classList.toggle('hidden', !on);
+  const sync = () => {
+    const s = $('#m_status').value;
+    show('#secBid', s === 'won' || s === 'lost'); show('#wrapWinner', s === 'lost'); show('#secRej', s === 'rejected'); show('#secWon', s === 'won'); show('#secFiles', s === 'won');
+    $('#lblWin').textContent = s === 'won' ? 'Yakuniy narx (shartnoma)' : "G'olib narxi";
+    show('#wrapTdate', $('#m_transfer_status').value === 'paid');
+  };
+  $('#m_status').onchange = sync; $('#m_transfer_status').onchange = sync; sync();
+
+  const renderFiles = files => {
+    $('#fileList').innerHTML = files.length ? files.map(x => `<div class="frow"><a href="/api/my-lots/files/${x.id}" target="_blank" rel="noopener">📄 ${esc(x.original_name)}</a>
+      <span class="muted small">${x.size < 1024 ? x.size + ' B' : nf(x.size / 1024) + ' KB'}</span>${ro ? '' : `<button class="btn small danger" type="button" data-fd="${x.id}">×</button>`}</div>`).join('') : '<p class="muted small">Hali fayl yuklanmagan</p>';
+    document.querySelectorAll('[data-fd]').forEach(b => b.onclick = async () => {
+      if (!confirm("Fayl o'chirilsinmi?")) return;
+      try { await api('/my-lots/files/' + b.dataset.fd, { method: 'DELETE' }); L.files = L.files.filter(x => x.id != b.dataset.fd); renderFiles(L.files); onDone && onDone(); } catch (e) { toast(e.message); }
+    });
+  };
+  renderFiles(L.files);
+  if ($('#fUp')) $('#fUp').onclick = async () => {
+    const fl = $('#m_files').files; if (!fl.length) return toast('PDF fayl tanlang');
+    const fd = new FormData(); [...fl].forEach(x => fd.append('files', x)); $('#fUp').disabled = true;
+    try {
+      const r = await api(`/my-lots/${id}/files`, { method: 'POST', form: fd });
+      toast(`Yuklandi: ${r.added} ta${r.rejected.length ? ` · PDF emas: ${r.rejected.join(', ')}` : ''}`);
+      L = await api('/my-lots/' + id); renderFiles(L.files); $('#m_files').value = ''; onDone && onDone();
+    } catch (e) { toast(e.message); } finally { $('#fUp').disabled = false; }
+  };
+  if ($('#mSave')) $('#mSave').onclick = async () => {
+    const body = {};
+    ['lot_no', 'product_no', 'product', 'brand', 'quantity', 'specs', 'start_price', 'starts_at', 'ends_at', 'status', 'reject_reason', 'our_bid', 'win_price', 'winner_name',
+      'contract_no', 'contract_date', 'amount_due', 'transfer_status', 'transferred_at', 'notes'].forEach(k => body[k] = $('#m_' + k).value);
+    try {
+      const r = await api(id ? '/my-lots/' + id : '/my-lots', { method: id ? 'PUT' : 'POST', json: body });
+      closeModal(); onDone && onDone();
+      if (!id && body.status === 'won') { toast("Saqlandi. Endi shartnoma PDF larini qo'shing"); lotForm(r.id, null, onDone); } else toast('Saqlandi');
+    } catch (e) { toast(e.message); }
+  };
+}
+
+function mlImportDialog(onDone) {
+  modal(`<h2>Mening lotlarimni import qilish</h2>
+  <p class="muted">.xlsx yoki .csv fayl (xarid.uzex.uz dagi "mening lotlarim" jadvali: №, Tovar №, Lot №, Tovar nomi, Miqdori, Xususiyatlari, Boshlang'ich narxi, sanalar, Status). Status matnidan holat avtomatik aniqlanadi (Yangi / G'olib / Yutqazilgan / Rad etilgan). Lot raqami takrorlansa, mavjud yozuv yangilanadi, qo'lda kiritilgan summa, shartnoma va o'tkazma ma'lumotlari saqlanib qoladi.</p>
+  <input type="file" id="impFile" accept=".xlsx,.xls,.csv"><div id="impOut" style="margin:12px 0"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeModal()">Yopish</button><button class="btn primary" id="impGo">Yuklash</button></div>`);
+  $('#impGo').onclick = async () => {
+    const file = $('#impFile').files[0]; if (!file) return toast('Fayl tanlang');
+    const fd = new FormData(); fd.append('file', file); $('#impOut').textContent = 'Yuklanmoqda…';
+    try {
+      const r = await api('/my-lots/import', { method: 'POST', form: fd });
+      $('#impOut').innerHTML = `<div class="bignote good">Yangi: <b>${r.inserted}</b> · Yangilandi: <b>${r.updated}</b> · O'tkazib yuborildi: <b>${r.skipped}</b></div>${r.errors.length ? `<ul class="small bad">${r.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}`;
+      onDone && onDone();
+    } catch (e) { $('#impOut').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+  };
+}
+
+/* ---------- Sozlamalar ---------- */
+async function settings() {
+  let usersHtml = '';
+  if (ME.role === 'admin') {
+    const us = await api('/users');
+    usersHtml = `<div class="card" style="margin-top:14px"><h2>Jamoa a'zolari</h2>
+    <table><thead><tr><th>Login</th><th>Ism</th><th>Rol</th><th></th></tr></thead><tbody>${us.map(u => `<tr><td class="c-title">${esc(u.username)}</td><td>${esc(u.full_name)}</td><td><span class="pill">${u.role}</span></td><td>${u.id !== ME.id ? `<button class="btn small danger" data-u="${u.id}">O'chirish</button>` : ''}</td></tr>`).join('')}</tbody></table>
+    <h3 style="margin-top:16px">Yangi foydalanuvchi</h3><div class="formgrid"><label>Login<input id="nuL"></label><label>Ism<input id="nuN"></label><label>Parol (min 6)<input id="nuP" type="password"></label>
+    <label>Rol<select id="nuR"><option value="analyst">analyst — import va tahrir</option><option value="viewer">viewer — faqat ko'rish</option><option value="admin">admin</option></select></label></div>
+    <button class="btn primary" id="nuGo" style="margin-top:10px">Qo'shish</button></div>`;
+  }
+  $('#view').innerHTML = head('Sozlamalar') + `<div class="card"><h2>Parolni almashtirish</h2><div class="formgrid"><label>Joriy parol<input id="opw" type="password"></label><label>Yangi parol<input id="npw" type="password"></label></div>
+    <button class="btn primary" id="pwGo" style="margin-top:10px">Almashtirish</button></div>` + usersHtml;
+  $('#pwGo').onclick = async () => { try { await api('/me/password', { method: 'POST', json: { old_password: $('#opw').value, new_password: $('#npw').value } }); toast('Parol almashtirildi'); $('#opw').value = $('#npw').value = ''; } catch (e) { toast(e.message); } };
+  if ($('#nuGo')) $('#nuGo').onclick = async () => { try { await api('/users', { method: 'POST', json: { username: $('#nuL').value, full_name: $('#nuN').value, password: $('#nuP').value, role: $('#nuR').value } }); toast('Qo\'shildi'); settings(); } catch (e) { toast(e.message); } };
+  document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => { if (confirm('Foydalanuvchi o\'chirilsinmi?')) { await api('/users/' + b.dataset.u, { method: 'DELETE' }); settings(); } });
+}
+
+const VIEWS = { dashboard, mylots, lots, trend, margin, rank, products, settings };
+boot();
