@@ -73,6 +73,40 @@ function clearable() {
    Brauzerning <input type="date|datetime-local"> maydoni formatni brauzer tilidan oladi (mm/dd/yyyy, AM/PM) va uni o'zgartirib bo'lmaydi.
    Shuning uchun har bir shunday maydon matnli maydon (maska: 27.10.2026 13:45) + 📅 tugmasi bilan almashtiriladi.
    Asl maydon yashirin holda qoladi va id, onchange, .value (ISO: YYYY-MM-DD yoki YYYY-MM-DDTHH:MM) avvalgidek ishlayveradi. */
+/* o'zimizning kalendar (brauzerning date-picker i o'rniga): o'zbekcha oylar, hafta dushanbadan */
+const CAL_M = ['Yanvar', 'Fevral', 'Mart', 'Aprel', 'May', 'Iyun', 'Iyul', 'Avgust', 'Sentabr', 'Oktabr', 'Noyabr', 'Dekabr'];
+const CAL_W = ['Du', 'Se', 'Ch', 'Pa', 'Ju', 'Sh', 'Ya'];
+let calEl = null;
+function closeCal() { if (calEl) { calEl.remove(); calEl = null; } }
+function openCal(anchor, iso, onPick) {
+  closeCal();
+  const p2 = n => String(n).padStart(2, '0'), now = new Date();
+  const today = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())}`, sel = /^\d{4}-\d{2}-\d{2}/.test(iso || '') ? iso.slice(0, 10) : '';
+  let y = sel ? +sel.slice(0, 4) : now.getFullYear(), m = sel ? +sel.slice(5, 7) - 1 : now.getMonth();
+  const el = calEl = document.createElement('div'); el.className = 'cal'; el._anchor = anchor;
+  const draw = () => {
+    const first = (new Date(y, m, 1).getDay() + 6) % 7, days = new Date(y, m + 1, 0).getDate();
+    let cells = '<span></span>'.repeat(first);
+    for (let d = 1; d <= days; d++) { const v = `${y}-${p2(m + 1)}-${p2(d)}`; cells += `<button type="button" class="cal-d${v === sel ? ' on' : ''}${v === today ? ' today' : ''}" data-d="${v}">${d}</button>`; }
+    el.innerHTML = `<div class="cal-h"><button type="button" data-n="-12" title="Oldingi yil">«</button><button type="button" data-n="-1" title="Oldingi oy">‹</button><b>${CAL_M[m]} ${y}</b><button type="button" data-n="1" title="Keyingi oy">›</button><button type="button" data-n="12" title="Keyingi yil">»</button></div>
+      <div class="cal-w">${CAL_W.map(d => `<span>${d}</span>`).join('')}</div><div class="cal-g">${cells}</div>
+      <div class="cal-f"><button type="button" data-d="${today}">Bugun</button><button type="button" data-d="">Tozalash</button></div>`;
+  };
+  el.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.n) { const t = m + +b.dataset.n; y += Math.floor(t / 12); m = ((t % 12) + 12) % 12; draw(); }
+    else if (b.dataset.d !== undefined) { closeCal(); onPick(b.dataset.d); }
+  };
+  draw(); document.body.appendChild(el);
+  const r = anchor.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  const top = r.bottom + 4 + h > innerHeight && r.top - h - 4 > 8 ? r.top - h - 4 : r.bottom + 4;   // pastga sig'masa tepaga, u ham sig'masa ekran ichiga siqiladi
+  el.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + 'px';
+}
+document.addEventListener('mousedown', e => { if (calEl && !calEl.contains(e.target) && !e.target.closest('.dt-cal')) closeCal(); });
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && calEl) { closeCal(); e.stopImmediatePropagation(); } }, true);   // Esc avval kalendarni yopadi, oyna ochiq qoladi
+window.addEventListener('scroll', e => { if (calEl && !calEl.contains(e.target)) closeCal(); }, true);
+
 function dateFields() {
   document.querySelectorAll('input[type=date],input[type=datetime-local]').forEach(orig => {
     if (orig.dataset.dt) return; orig.dataset.dt = '1';
@@ -115,12 +149,12 @@ function dateFields() {
     vis.addEventListener('blur', () => { vis.classList.toggle('invalid', !!digits() && !orig.value); emit(); });
 
     cal.onclick = () => {                                            // kalendar: faqat sana tanlanadi, vaqt matn maydonida qoladi
-      w.querySelectorAll('.dt-pick').forEach(x => x.remove());
-      const p = document.createElement('input'); p.type = 'date'; p.className = 'dt-pick'; p.value = orig.value.slice(0, 10);
-      w.appendChild(p);
-      p.onchange = () => { if (p.value) { const d = digits(); apply(show(p.value) + (withTime ? ' ' + (d.length > 8 ? fmt(d).slice(11) : '00:00') : '')); emit(); } p.remove(); };
-      p.onblur = () => setTimeout(() => p.remove(), 200);
-      try { p.showPicker(); } catch { p.focus(); p.click(); }
+      if (calEl && calEl._anchor === cal) return closeCal();
+      openCal(cal, orig.value, v => {
+        const d = digits();
+        apply(v ? show(v) + (withTime ? ' ' + (d.length > 8 ? fmt(d).slice(11) : '00:00') : '') : '');
+        emit(); vis.focus();
+      });
     };
   });
 }
