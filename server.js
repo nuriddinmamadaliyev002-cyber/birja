@@ -13,8 +13,33 @@ app.set('trust proxy', 2);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
-app.use('/vendor', express.static(path.join(__dirname, 'node_modules/chart.js/dist')));
+/* ---------- frontend keshi ----------
+   index.html har doim yangidan olinadi (no-cache), unda app.js / style.css ga fayl mazmunidan hisoblangan ?v=hash qo'shiladi.
+   Fayl o'zgarsa hash o'zgaradi -> brauzer va Cloudflare yangi URL ni so'raydi. ?v= li fayllar 1 yil keshlanadi. */
+const PUB = path.join(__dirname, 'public');
+const VENDOR = path.join(__dirname, 'node_modules/chart.js/dist');
+const md5 = file => crypto.createHash('md5').update(fs.readFileSync(file)).digest('hex').slice(0, 10);
+let indexCache = { sig: '', html: '' };
+function indexHtml() {
+  const files = ['index.html', 'app.js', 'style.css'].map(f => path.join(PUB, f));
+  const sig = files.map(f => fs.statSync(f).mtimeMs).join('|');       // fayl o'zgarganda qayta hisoblanadi
+  if (sig !== indexCache.sig) {
+    const html = fs.readFileSync(files[0], 'utf8').replace(/(href|src)="\/(style\.css|app\.js)"/g,
+      (m, attr, f) => `${attr}="/${f}?v=${md5(path.join(PUB, f))}"`)
+      .replace('/vendor/chart.umd.js', `/vendor/chart.umd.js?v=${md5(path.join(VENDOR, 'chart.umd.js'))}`);
+    indexCache = { sig, html };
+  }
+  return indexCache.html;
+}
+const cacheHeaders = (req, res, next) => {
+  if (/\.(js|css|html)$/.test(req.path) || req.path === '/')
+    res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+  next();
+};
+app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(indexHtml()));
+app.use(cacheHeaders);
+app.use(express.static(PUB, { index: false, cacheControl: false }));
+app.use('/vendor', cacheHeaders, express.static(VENDOR, { cacheControl: false }));
 
 // async handlerlardagi xatolarni Express ga uzatadi
 const ah = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
