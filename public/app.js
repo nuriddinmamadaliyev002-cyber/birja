@@ -107,6 +107,57 @@ document.addEventListener('mousedown', e => { if (calEl && !calEl.contains(e.tar
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && calEl) { closeCal(); e.stopImmediatePropagation(); } }, true);   // Esc avval kalendarni yopadi, oyna ochiq qoladi
 window.addEventListener('scroll', e => { if (calEl && !calEl.contains(e.target)) closeCal(); }, true);
 
+const nowLocal = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+
+/* ---------- son maydonlari: yozganda 1000000 -> 1,000,000 ----------
+   Minglik ajratuvchi: vergul (yoki probel), yozilsa qabul qilinadi va o'zi qayta qo'yiladi. Kasr: nuqta (100,000.50).
+   Asl <input type=number> yashirin holda qoladi: id, oninput/onchange va .value (oddiy son: "100000.5") avvalgidek ishlaydi. */
+function numFields() {
+  document.querySelectorAll('input[type=number]').forEach(orig => {
+    if (orig.dataset.nf) return; orig.dataset.nf = '1';
+    const vis = document.createElement('input');
+    Object.assign(vis, { type: 'text', inputMode: 'decimal', autocomplete: 'off', className: 'num-text', placeholder: orig.placeholder, disabled: orig.disabled });
+    orig.parentNode.insertBefore(vis, orig); orig.style.display = 'none';
+    const parts = s => {                                              // matn -> { neg, int, frac }
+      const neg = /^\s*-/.test(s); s = s.replace(/[^\d.]/g, '');
+      const i = s.indexOf('.');
+      return { neg, int: (i < 0 ? s : s.slice(0, i)).replace(/^0+(?=\d)/, ''), frac: i < 0 ? null : s.slice(i + 1).replace(/\./g, '').slice(0, 6) };
+    };
+    const shownInt = p => (p.int === '' && p.frac !== null ? '0' : p.int).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const render = p => (p.neg ? '-' : '') + shownInt(p) + (p.frac !== null ? '.' + p.frac : '');
+    const rawOf = p => { const i = p.int === '' && p.frac ? '0' : p.int; return i === '' ? '' : (p.neg ? '-' : '') + i + (p.frac ? '.' + p.frac : ''); };
+    let shown = '', lastRaw = orig.value, lastChange = orig.value;
+    const apply = (text, caret, del) => {
+      let n = text.slice(0, caret).replace(/[^\d.]/g, '').length;       // kursordan oldingi raqam/nuqta soni
+      let p = parts(text), f = render(p);
+      if (del && f === shown) {                                       // faqat vergul o'chirilgan bo'lsa, qo'shni raqam o'chadi
+        const sig = text.replace(/[^\d.]/g, ''), k = del === 'back' ? n - 1 : n;
+        if (k >= 0 && k < sig.length) { p = parts((p.neg ? '-' : '') + sig.slice(0, k) + sig.slice(k + 1)); f = render(p); n = k; }
+      }
+      vis.value = shown = f; orig.value = rawOf(p);
+      let pos = 0, c = 0;
+      while (pos < f.length && c < n) { if (/[\d.]/.test(f[pos])) c++; pos++; }
+      if (p.int === '' && p.frac !== null) pos = f.length;
+      if (n === 0 && p.neg) pos = Math.max(pos, 1);
+      if (document.activeElement === vis) vis.setSelectionRange(pos, pos);
+      if (orig.value !== lastRaw) { lastRaw = orig.value; orig.dispatchEvent(new Event('input', { bubbles: true })); }
+    };
+    vis.value = shown = render(parts(orig.value));
+    vis.addEventListener('input', e => { const t = e.inputType || ''; apply(vis.value, vis.selectionStart ?? vis.value.length, t === 'deleteContentBackward' ? 'back' : t === 'deleteContentForward' ? 'fwd' : 0); });
+    vis.addEventListener('paste', e => {
+      e.preventDefault();
+      let t = (e.clipboardData.getData('text') || '').trim();
+      if (!/\./.test(t) && /,\d{1,2}$/.test(t)) t = t.replace(/[\s.]/g, '').replace(',', '.');   // "100 000,50" (ruscha yozuv) -> 100000.50
+      const a = vis.selectionStart, b = vis.selectionEnd, v = vis.value;
+      apply(v.slice(0, a) + t + v.slice(b), a + t.length);
+    });
+    vis.addEventListener('blur', () => {
+      apply(vis.value.replace(/\.$/, ''), 0);                         // oxiridagi yolg'iz nuqtani olib tashlaydi
+      if (orig.value !== lastChange) { lastChange = orig.value; orig.dispatchEvent(new Event('change', { bubbles: true })); }
+    });
+  });
+}
+
 function dateFields() {
   document.querySelectorAll('input[type=date],input[type=datetime-local]').forEach(orig => {
     if (orig.dataset.dt) return; orig.dataset.dt = '1';
@@ -145,6 +196,7 @@ function dateFields() {
       if (v || !d) emit();
     };
     vis.value = shown = show(orig.value);
+    orig._set = iso => { orig.value = iso; vis.value = shown = show(orig.value); vis.classList.remove('invalid'); emit(); };   // dastur tomonidan qiymat berish
     vis.addEventListener('input', e => apply(vis.value, (e.inputType || '').startsWith('delete')));
     vis.addEventListener('blur', () => { vis.classList.toggle('invalid', !!digits() && !orig.value); emit(); });
 
@@ -158,7 +210,7 @@ function dateFields() {
     };
   });
 }
-new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); dateFields(); }); }).observe(document.body, { childList: true, subtree: true });
+new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); dateFields(); numFields(); }); }).observe(document.body, { childList: true, subtree: true });
 
 /* ---------- holat ---------- */
 let ME = null, FILTERS = null, PRODUCTS = [];
@@ -466,7 +518,7 @@ async function products() {
   <p class="muted small">Marja = (sotuv narxi − tan narx) / sotuv narxi. Qizil: zarar, sariq: 15% dan past.</p>`;
   const form = p => modal(`<h2>${p ? 'Mahsulotni tahrirlash' : 'Yangi mahsulot'}</h2><div class="formgrid">
     ${[['category', 'Toifa'], ['name', 'Nomi'], ['unit', 'Birlik (masalan: 1 ta qopda 25 kg)'], ['cost', 'Tan narx (1 birlik)'], ['price', 'Sotuv narxi'], ['store_markup', "Milliy do'kon koeffitsiyenti"], ['cert_fee', "Sertifikat to'lovi"], ['keywords', 'Kalit so\'zlar (vergul bilan)']]
-      .map(([k, l]) => `<label>${l}<input id="p_${k}" value="${esc(p ? p[k] : k === 'store_markup' ? 1.4 : '')}"></label>`).join('')}</div>
+      .map(([k, l]) => `<label>${l}<input id="p_${k}" ${['cost', 'price', 'store_markup', 'cert_fee'].includes(k) ? 'type="number" step="any"' : ''} value="${esc(p ? p[k] : k === 'store_markup' ? 1.4 : '')}"></label>`).join('')}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal()">Bekor</button><button class="btn primary" id="pSave">Saqlash</button></div>`);
   if ($('#addP')) $('#addP').onclick = () => { form(null); $('#pSave').onclick = () => save(null); };
   document.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { const p = PRODUCTS.find(x => x.id == b.dataset.e); form(p); $('#pSave').onclick = () => save(p.id); });
@@ -552,7 +604,7 @@ async function mylots(sub) {
       try { await api('/my-lots/' + b.dataset.del, { method: 'DELETE' }); again(); } catch (e) { toast(e.message); }
     });
     document.querySelectorAll('[data-tr]').forEach(sel => sel.onchange = async () => {
-      try { await api('/my-lots/' + sel.dataset.tr, { method: 'PATCH', json: { transfer_status: sel.value } }); toast(TRANSFER_LABEL[sel.value]); again(); }
+      try { await api('/my-lots/' + sel.dataset.tr, { method: 'PATCH', json: { transfer_status: sel.value, transferred_at: sel.value === 'paid' ? nowLocal() : '' } }); toast(TRANSFER_LABEL[sel.value]); again(); }
       catch (e) { toast(e.message); }
     });
     document.querySelectorAll('[data-q]').forEach(b => b.onclick = async () => {   // tezkor natija: G'olib / Yutqazdi / Rad -> tafsilot oynasi ochiladi
@@ -578,7 +630,7 @@ async function lotForm(id, preset, onDone) {
     <div id="secRej" class="sec"><label>Rad etish sababi<textarea id="m_reject_reason" rows="2">${esc(L.reject_reason ?? '')}</textarea></label></div>
     <div id="secWon" class="formgrid sec">${f('contract_no', 'Shartnoma raqami')}${f('contract_date', 'Shartnoma sanasi', 'date')}${f('amount_due', "O'tkazib berilishi kerak summa (so'm)", 'number', 'step="any"')}
       <label>O'tkazma holati<select id="m_transfer_status">${Object.entries(TRANSFER_LABEL).map(([k, t]) => `<option value="${k}" ${L.transfer_status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-      <span id="wrapTdate">${f('transferred_at', "O'tkazilgan sana", 'date')}</span></div>
+      <span id="wrapTdate">${f('transferred_at', "O'tkazilgan sana va vaqt", 'datetime-local')}</span></div>
     <label class="sec">Izoh<textarea id="m_notes" rows="2">${esc(L.notes ?? '')}</textarea></label>
     <div id="secFiles" class="sec"><h3>Shartnoma PDF lari</h3><div id="fileList"></div>
       ${ro ? '' : id ? `<div class="filebar"><input type="file" id="m_files" accept="application/pdf,.pdf" multiple><button class="btn" id="fUp" type="button">Yuklash</button></div>`
@@ -591,7 +643,13 @@ async function lotForm(id, preset, onDone) {
     $('#lblWin').textContent = s === 'won' ? 'Yakuniy narx (shartnoma)' : "G'olib narxi";
     show('#wrapTdate', $('#m_transfer_status').value === 'paid');
   };
-  $('#m_status').onchange = sync; $('#m_transfer_status').onchange = sync; sync();
+  $('#m_status').onchange = sync; sync();
+  $('#m_transfer_status').onchange = () => {            // "O'tkazildi" tanlansa, sana-vaqt bo'sh bo'lsa hozirgi vaqt qo'yiladi
+    sync();
+    const o = $('#m_transferred_at');
+    if ($('#m_transfer_status').value === 'paid' && !o.value) o._set ? o._set(nowLocal()) : (o.value = nowLocal());
+  };
+  sync();
 
   const renderFiles = files => {
     $('#fileList').innerHTML = files.length ? files.map(x => `<div class="frow"><a href="/api/my-lots/files/${x.id}" target="_blank" rel="noopener">📄 ${esc(x.original_name)}</a>

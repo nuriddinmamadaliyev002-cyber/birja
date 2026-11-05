@@ -190,3 +190,4 @@ textarea{width:100%;resize:vertical}
 .cal .cal-d.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
 .cal-f{display:flex;justify-content:space-between;margin-top:6px}.cal-f button{padding:4px 8px;font-size:12px;color:var(--accent)}
 .dt-text.invalid{outline:2px solid var(--bad);outline-offset:-1px}
+.num-text{font-variant-numeric:tabular-nums}
