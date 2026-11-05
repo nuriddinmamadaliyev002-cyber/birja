@@ -69,7 +69,62 @@ function clearable() {
     w.appendChild(b);
   });
 }
-new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); }); }).observe(document.body, { childList: true, subtree: true });
+/* ---------- sana / vaqt maydonlari: kk.oo.yyyy va 24 soatlik (SS:DD) format ----------
+   Brauzerning <input type="date|datetime-local"> maydoni formatni brauzer tilidan oladi (mm/dd/yyyy, AM/PM) va uni o'zgartirib bo'lmaydi.
+   Shuning uchun har bir shunday maydon matnli maydon (maska: 27.10.2026 13:45) + 📅 tugmasi bilan almashtiriladi.
+   Asl maydon yashirin holda qoladi va id, onchange, .value (ISO: YYYY-MM-DD yoki YYYY-MM-DDTHH:MM) avvalgidek ishlayveradi. */
+function dateFields() {
+  document.querySelectorAll('input[type=date],input[type=datetime-local]').forEach(orig => {
+    if (orig.dataset.dt) return; orig.dataset.dt = '1';
+    const withTime = orig.type === 'datetime-local', max = withTime ? 12 : 8;
+    const w = document.createElement('span'); w.className = 'dtw';
+    const vis = document.createElement('input');
+    Object.assign(vis, { type: 'text', inputMode: 'numeric', autocomplete: 'off', className: 'dt-text', maxLength: 16,
+      placeholder: withTime ? 'kk.oo.yyyy ss:dd' : 'kk.oo.yyyy', disabled: orig.disabled });
+    const cal = document.createElement('button');
+    Object.assign(cal, { type: 'button', className: 'dt-cal', tabIndex: -1, title: 'Kalendar', textContent: '📅' });
+    orig.parentNode.insertBefore(w, orig); w.append(vis, cal, orig); orig.style.display = 'none';
+
+    const fmt = d => { d = d.slice(0, max); let o = d.slice(0, 2); if (d.length > 2) o += '.' + d.slice(2, 4); if (d.length > 4) o += '.' + d.slice(4, 8);
+      if (d.length > 8) o += ' ' + d.slice(8, 10); if (d.length > 10) o += ':' + d.slice(10, 12); return o; };
+    const toIso = d => {
+      if (d.length !== max) return '';
+      const dd = +d.slice(0, 2), mm = +d.slice(2, 4), yy = +d.slice(4, 8), t = new Date(Date.UTC(yy, mm - 1, dd));
+      if (yy < 1900 || t.getUTCMonth() !== mm - 1 || t.getUTCDate() !== dd) return '';
+      if (withTime && (+d.slice(8, 10) > 23 || +d.slice(10, 12) > 59)) return '';
+      return `${d.slice(4, 8)}-${d.slice(2, 4)}-${d.slice(0, 2)}` + (withTime ? `T${d.slice(8, 10)}:${d.slice(10, 12)}` : '');
+    };
+    const show = iso => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+      return m ? `${m[3]}.${m[2]}.${m[1]}` + (withTime && m[4] ? ` ${m[4]}:${m[5]}` : '') : ''; };
+    let last = orig.value;                                           // oxirgi 'change' yuborilgan qiymat
+    const emit = () => { if (orig.value !== last) { last = orig.value; orig.dispatchEvent(new Event('change', { bubbles: true })); } };
+    let shown = '';                                                  // oxirgi ko'rsatilgan matn (input hodisasida vis.value allaqachon o'zgargan bo'ladi)
+    const digits = () => vis.value.replace(/\D/g, '');
+    const apply = (text, deleting) => {
+      const iso = String(text).trim().match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);   // ISO matn qo'yilsa (paste)
+      let d = iso ? iso[3] + iso[2] + iso[1] + (iso[4] ? iso[4] + iso[5] : '') : String(text).replace(/\D/g, '');
+      let f = fmt(d);
+      if (deleting && f.length >= shown.length && d.length) f = fmt(d.slice(0, -1));   // nuqta/ikki nuqtani o'chirganda oldingi raqam o'chadi
+      vis.value = shown = f; d = f.replace(/\D/g, '');
+      const v = toIso(d); orig.value = v;
+      vis.classList.toggle('invalid', d.length === max && !v);
+      if (v || !d) emit();
+    };
+    vis.value = shown = show(orig.value);
+    vis.addEventListener('input', e => apply(vis.value, (e.inputType || '').startsWith('delete')));
+    vis.addEventListener('blur', () => { vis.classList.toggle('invalid', !!digits() && !orig.value); emit(); });
+
+    cal.onclick = () => {                                            // kalendar: faqat sana tanlanadi, vaqt matn maydonida qoladi
+      w.querySelectorAll('.dt-pick').forEach(x => x.remove());
+      const p = document.createElement('input'); p.type = 'date'; p.className = 'dt-pick'; p.value = orig.value.slice(0, 10);
+      w.appendChild(p);
+      p.onchange = () => { if (p.value) { const d = digits(); apply(show(p.value) + (withTime ? ' ' + (d.length > 8 ? fmt(d).slice(11) : '00:00') : '')); emit(); } p.remove(); };
+      p.onblur = () => setTimeout(() => p.remove(), 200);
+      try { p.showPicker(); } catch { p.focus(); p.click(); }
+    };
+  });
+}
+new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); dateFields(); }); }).observe(document.body, { childList: true, subtree: true });
 
 /* ---------- holat ---------- */
 let ME = null, FILTERS = null, PRODUCTS = [];
@@ -523,6 +578,7 @@ async function lotForm(id, preset, onDone) {
     } catch (e) { toast(e.message); } finally { $('#fUp').disabled = false; }
   };
   if ($('#mSave')) $('#mSave').onclick = async () => {
+    if (document.querySelector('#modalBox .dt-text.invalid')) return toast('Sana/vaqt noto\'g\'ri. Format: kk.oo.yyyy ss:dd');
     const body = {};
     ['lot_no', 'product_no', 'product', 'brand', 'quantity', 'specs', 'start_price', 'starts_at', 'ends_at', 'status', 'reject_reason', 'our_bid', 'win_price', 'winner_name',
       'contract_no', 'contract_date', 'amount_due', 'transfer_status', 'transferred_at', 'notes'].forEach(k => body[k] = $('#m_' + k).value);
