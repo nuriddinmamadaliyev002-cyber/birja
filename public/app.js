@@ -510,9 +510,9 @@ async function rank() {
 /* ---------- Mahsulotlar ---------- */
 async function products() {
   await refreshMeta();
-  $('#view').innerHTML = head('Mahsulotlarimiz', 'USTA-TRADE mahsulotlari: tan narx, sotuv narxi va birja bilan moslash kalit so\'zlari', canWrite() ? '<button class="btn primary" id="addP">+ Mahsulot</button>' : '') + `
-  <div class="tablewrap"><table><thead><tr><th>Toifa</th><th>Nomi</th><th>Birlik</th><th class="num">Tan narx</th><th class="num">1 kg tan narx</th><th class="num">Sotuv narxi</th><th class="num">Marja</th><th class="num">Milliy do'kon</th><th>Kalit so'zlar</th><th></th></tr></thead><tbody>
-  ${PRODUCTS.map(p => { const m = p.cost != null && p.price ? (p.price - p.cost) * 100 / p.price : null; return `<tr><td>${esc(p.category)}</td><td class="c-title">${esc(p.name)}</td><td>${esc(p.unit)}</td><td class="num">${nf(p.cost)}</td><td class="num">${p.pack_kg && p.cost != null ? nf(p.cost / p.pack_kg) : '—'}</td><td class="num">${nf(p.price)}</td>
+  $('#view').innerHTML = head('Mahsulotlarimiz', 'USTA-TRADE mahsulotlari: tan narx, sotuv narxi va birja bilan moslash kalit so\'zlari', '<button class="btn" id="pExp">Excel\'ga export</button> ' + (canWrite() ? '<button class="btn primary" id="addP">+ Mahsulot</button>' : '')) + `
+  <div class="tablewrap"><table><thead><tr><th>№</th><th>Toifa</th><th>Nomi</th><th>Birlik</th><th class="num">Tan narx</th><th class="num">1 kg tan narx</th><th class="num">Sotuv narxi</th><th class="num">Marja</th><th class="num">Milliy do'kon</th><th>Kalit so'zlar</th><th></th></tr></thead><tbody>
+  ${PRODUCTS.map((p, i) => { const m = p.cost != null && p.price ? (p.price - p.cost) * 100 / p.price : null; return `<tr><td class="muted c-hide">${i + 1}</td><td>${esc(p.category)}</td><td class="c-title">${esc(p.name)}</td><td>${esc(p.unit)}</td><td class="num">${nf(p.cost)}</td><td class="num">${p.pack_kg && p.cost != null ? nf(p.cost / p.pack_kg) : '—'}</td><td class="num">${nf(p.price)}</td>
   <td class="num ${m < 0 ? 'bad' : m < 15 ? 'warn' : ''}">${pct(m)}</td><td class="num">${p.price ? nf(p.price * (p.store_markup || 1.4)) : '—'}</td><td class="small muted">${esc(p.keywords)}</td>
   <td class="nowrap">${canWrite() ? `<button class="btn small" data-e="${p.id}">✎</button> <button class="btn small danger" data-d="${p.id}">×</button>` : ''}</td></tr>`; }).join('')}</tbody></table></div>
   <p class="muted small">Marja = (sotuv narxi − tan narx) / sotuv narxi. Qizil: zarar, sariq: 15% dan past.</p>`;
@@ -520,6 +520,7 @@ async function products() {
     ${[['category', 'Toifa'], ['name', 'Nomi'], ['unit', 'Birlik (masalan: 1 ta qopda 25 kg)'], ['cost', 'Tan narx (1 birlik)'], ['price', 'Sotuv narxi'], ['store_markup', "Milliy do'kon koeffitsiyenti"], ['cert_fee', "Sertifikat to'lovi"], ['keywords', 'Kalit so\'zlar (vergul bilan)']]
       .map(([k, l]) => `<label>${l}<input id="p_${k}" ${['cost', 'price', 'store_markup', 'cert_fee'].includes(k) ? 'type="number" step="any"' : ''} value="${esc(p ? p[k] : k === 'store_markup' ? 1.4 : '')}"></label>`).join('')}</div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="closeModal()">Bekor</button><button class="btn primary" id="pSave">Saqlash</button></div>`);
+  $('#pExp').onclick = () => exportDialog({ title: "Mahsulotlarni Excel'ga export qilish", base: '/products/export' });
   if ($('#addP')) $('#addP').onclick = () => { form(null); $('#pSave').onclick = () => save(null); };
   document.querySelectorAll('[data-e]').forEach(b => b.onclick = () => { const p = PRODUCTS.find(x => x.id == b.dataset.e); form(p); $('#pSave').onclick = () => save(p.id); });
   document.querySelectorAll('[data-d]').forEach(b => b.onclick = async () => { if (!confirm('O\'chirilsinmi?')) return; await api('/products/' + b.dataset.d, { method: 'DELETE' }); products(); });
@@ -560,7 +561,7 @@ async function mylots(sub) {
     ${sub === 'won' ? `<label>O'tkazma<select id="mlT"><option value="">Barchasi</option><option value="pending" ${MLS.transfer === 'pending' ? 'selected' : ''}>O'tkazilmagan</option><option value="paid" ${MLS.transfer === 'paid' ? 'selected' : ''}>O'tkazildi</option></select></label>` : ''}</div>
     <div id="mlOut"></div>`;
   const again = () => { refreshCounts(); mylots(sub); };
-  $('#mlExp').onclick = () => exportDialog(sub);   // ustun tanlash oynasi; yuklash joriy filtr bo'yicha
+  $('#mlExp').onclick = () => exportLots(sub);   // ustun tanlash oynasi; yuklash joriy filtr bo'yicha
   if (w) { $('#mlAdd').onclick = () => lotForm(null, sub, again); $('#mlImp').onclick = () => mlImportDialog(again); }
   $('#mlQ').oninput = debounce(() => { MLS.q = $('#mlQ').value; MLS.page = 1; load(); });
   if ($('#mlT')) $('#mlT').onchange = () => { MLS.transfer = $('#mlT').value; MLS.page = 1; load(); };
@@ -615,13 +616,15 @@ async function mylots(sub) {
   await load();
 }
 
-/* ---------- Excel'ga export: ustunlarni tanlash (tanlovni doimiy saqlash mumkin, foydalanuvchi va bo'lim bo'yicha) ---------- */
-async function exportDialog(sub) {
+/* ---------- Excel'ga export: ustunlarni tanlash (tanlovni doimiy saqlash mumkin, foydalanuvchi bo'yicha) ----------
+   Umumiy oyna: o = { title, base: '/my-lots/export', q: {status}, note, params: () => ({filtrlar}) }
+   Server: GET base/columns -> {columns, saved}; PUT/DELETE base/columns; GET base?cols=a,b -> .xlsx */
+async function exportDialog(o) {
   let info;
-  try { info = await api('/my-lots/export/columns?' + qs({ status: sub })); } catch (e) { return toast(e.message); }
+  try { info = await api(o.base + '/columns?' + qs(o.q || {})); } catch (e) { return toast(e.message); }
   const on = new Set(info.saved || info.columns.map(c => c.key));
-  modal(`<h2>Excel'ga export — ${esc(ST_LABEL[sub] || '')}</h2>
-    <p class="muted">Faylga qo'shiladigan ustunlarni tanlang. Qatorlar joriy qidiruv/filtr bo'yicha yuklanadi.</p>
+  modal(`<h2>${esc(o.title)}</h2>
+    <p class="muted">Faylga qo'shiladigan ustunlarni tanlang.${o.note ? ' ' + esc(o.note) : ''}</p>
     <div class="xc-tools"><button class="btn small" type="button" id="xAll">Hammasini tanlash</button><button class="btn small" type="button" id="xNone">Tozalash</button>
       <span class="muted small" id="xCnt"></span></div>
     <div class="xc-grid">${info.columns.map(c => `<label class="xc"><input type="checkbox" data-k="${esc(c.key)}" ${on.has(c.key) ? 'checked' : ''}><span>${esc(c.label)}</span></label>`).join('')}</div>
@@ -634,17 +637,19 @@ async function exportDialog(sub) {
   $('#xAll').onclick = () => { boxes().forEach(b => b.checked = true); count(); };
   $('#xNone').onclick = () => { boxes().forEach(b => b.checked = false); count(); };
   if ($('#xReset')) $('#xReset').onclick = async () => {
-    try { await api('/my-lots/export/columns?' + qs({ status: sub }), { method: 'DELETE' }); } catch (e) { return toast(e.message); }
+    try { await api(o.base + '/columns?' + qs(o.q || {}), { method: 'DELETE' }); } catch (e) { return toast(e.message); }
     boxes().forEach(b => b.checked = true); $('#xSave').checked = false; $('#xReset').remove(); count(); toast('Standart sozlamaga qaytdi (hamma ustun)');
   };
   $('#xGo').onclick = async () => {
     const cols = boxes().filter(b => b.checked).map(b => b.dataset.k);
     if (!cols.length) return toast('Kamida bitta ustun tanlang');
-    if ($('#xSave').checked) { try { await api('/my-lots/export/columns', { method: 'PUT', json: { status: sub, cols } }); } catch (e) { return toast(e.message); } }
-    location.href = '/api/my-lots/export?' + qs({ status: sub, q: MLS.q, transfer: sub === 'won' ? MLS.transfer : '', cols: cols.join(',') });
+    if ($('#xSave').checked) { try { await api(o.base + '/columns', { method: 'PUT', json: { ...(o.q || {}), cols } }); } catch (e) { return toast(e.message); } }
+    location.href = '/api' + o.base + '?' + qs({ ...(o.params ? o.params() : {}), cols: cols.join(',') });
     closeModal();
   };
 }
+const exportLots = sub => exportDialog({ title: `Excel'ga export — ${ST_LABEL[sub] || ''}`, base: '/my-lots/export', q: { status: sub },
+  note: "Qatorlar joriy qidiruv/filtr bo'yicha yuklanadi.", params: () => ({ status: sub, q: MLS.q, transfer: sub === 'won' ? MLS.transfer : '' }) });
 
 async function lotForm(id, preset, onDone) {
   const ro = !canWrite();

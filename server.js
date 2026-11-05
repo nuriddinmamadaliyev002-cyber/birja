@@ -252,6 +252,8 @@ app.get('/api/analytics/margin', auth, ah(async (req, res) => {
   });
 }));
 
+// Mahsulotlar jadvalini Excel'ga export (ustun tanlash va doimiy saqlash); /api/products/:id dan oldin ulanadi
+app.use('/api/products/export', auth, require('./lib/prodexport')({ db, ah }));
 /* ---------------- products (o'z mahsulotlarimiz) ---------------- */
 app.get('/api/products', auth, ah(async (req, res) => res.json(await db.all('SELECT * FROM products ORDER BY id'))));
 const numOrNull = v => (v === '' || v === undefined || v === null ? null : Number.isFinite(+v) ? +v : null);
