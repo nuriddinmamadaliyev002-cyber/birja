@@ -207,3 +207,9 @@ textarea{width:100%;resize:vertical}
   #mlOut tbody tr>td.c-cust::before{display:none}
   #mlOut tbody tr>td.c-cust:empty{display:none}
 }
+/* Excel export: ustun tanlash */
+.xc-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.xc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px 14px}
+label.xc{flex-direction:row;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);cursor:pointer;padding:5px 2px}
+label.xc input{padding:0;margin:2px 0 0;width:16px;height:16px;flex:none;accent-color:var(--accent)}
+label.xc-save{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
