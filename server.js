@@ -1,176 +1,303 @@
-:root{
-  --bg:#f6f7f9;--card:#fff;--ink:#1b2430;--muted:#6b7686;--line:#e3e7ed;--accent:#1f6feb;--accent-ink:#fff;
-  --good:#1a7f4b;--bad:#c53030;--warn:#b7791f;--c1:#1f6feb;--c2:#e07a1f;--c3:#2a9d8f;--c4:#8e5bd1;--soft:#eef3fe;
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const multer = require('multer');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+const path = require('path');
+const fs = require('fs');
+const { db, init, ensureAdmin } = require('./lib/db');
+const P = require('./lib/parse');
+
+const app = express();
+app.set('trust proxy', 2);
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+app.use(express.json({ limit: '2mb' }));
+app.use(cookieParser());
+/* ---------- frontend keshi ----------
+   index.html har doim yangidan olinadi (no-cache), unda app.js / style.css ga fayl mazmunidan hisoblangan ?v=hash qo'shiladi.
+   Fayl o'zgarsa hash o'zgaradi -> brauzer va Cloudflare yangi URL ni so'raydi. ?v= li fayllar 1 yil keshlanadi. */
+const PUB = path.join(__dirname, 'public');
+const VENDOR = path.join(__dirname, 'node_modules/chart.js/dist');
+const md5 = file => crypto.createHash('md5').update(fs.readFileSync(file)).digest('hex').slice(0, 10);
+let indexCache = { sig: '', html: '' };
+function indexHtml() {
+  const files = ['index.html', 'app.js', 'style.css'].map(f => path.join(PUB, f));
+  const sig = files.map(f => fs.statSync(f).mtimeMs).join('|');       // fayl o'zgarganda qayta hisoblanadi
+  if (sig !== indexCache.sig) {
+    const html = fs.readFileSync(files[0], 'utf8').replace(/(href|src)="\/(style\.css|app\.js)"/g,
+      (m, attr, f) => `${attr}="/${f}?v=${md5(path.join(PUB, f))}"`)
+      .replace('/vendor/chart.umd.js', `/vendor/chart.umd.js?v=${md5(path.join(VENDOR, 'chart.umd.js'))}`);
+    indexCache = { sig, html };
+  }
+  return indexCache.html;
 }
-@media (prefers-color-scheme:dark){:root{
-  --bg:#12161c;--card:#1a2029;--ink:#e6eaf0;--muted:#93a0b2;--line:#2a323e;--accent:#5b9dff;--accent-ink:#0b1220;
-  --good:#4cc38a;--bad:#ff7b7b;--warn:#e5b567;--c1:#5b9dff;--c2:#f0a35c;--c3:#4fc4b5;--c4:#b693ec;--soft:#1c2a40;}}
-*{box-sizing:border-box}
-body{margin:0;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
-.hidden{display:none!important}
-.muted{color:var(--muted)}.small{font-size:12px}.right{text-align:right}.nowrap{white-space:nowrap}
-.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}
-h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:0 0 12px}h3{font-size:14px;margin:0 0 8px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
-.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
-.side{background:var(--card);border-right:1px solid var(--line);padding:16px 12px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
-.brand{font-weight:700;font-size:17px;padding:4px 10px 16px}.brand span{color:var(--accent);margin-left:4px}
-nav a{display:block;padding:9px 12px;border-radius:8px;color:var(--ink);text-decoration:none;margin-bottom:2px}
-nav a:hover{background:var(--bg)}nav a.on{background:var(--soft);color:var(--accent);font-weight:600}
-.side-foot{margin-top:auto;padding:10px}
-.main{padding:24px 28px;max-width:1280px;width:100%;min-width:0}
-.range .mk.r i{left:auto;right:4px}
-.page-head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-.grid{display:grid;gap:14px}.g4{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}.g2{grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
-.kpi .v{font-size:24px;font-weight:700;margin-top:4px}.kpi .l{color:var(--muted);font-size:12px}
-.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
-label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
-input,select,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:7px 9px;min-width:0}
-input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
-.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:7px;padding:7px 13px;cursor:pointer}
-.btn:hover{border-color:var(--accent)}.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
-.btn.ghost{background:transparent}.btn.small{padding:4px 9px;font-size:12px}.btn.danger{color:var(--bad)}
-table{width:100%;border-collapse:collapse}
-th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
-th{font-size:12px;color:var(--muted);font-weight:600;white-space:nowrap;position:sticky;top:0;background:var(--card)}
-th.s{cursor:pointer;user-select:none}th.s:hover{color:var(--accent)}
-td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-tr.click{cursor:pointer}tr.click:hover td{background:var(--soft)}
-.tablewrap{overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:10px;background:var(--card)}
-.tablewrap table td:first-child,.tablewrap table th:first-child{padding-left:14px}
-.tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
-.tab{padding:6px 14px;border-radius:999px;border:1px solid var(--line);background:var(--card);cursor:pointer}
-.tab.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
-.pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px}
-.chart{position:relative;height:300px}
-.login{min-height:100vh;display:grid;place-items:center;padding:16px}
-.login-card{width:340px;display:flex;flex-direction:column;gap:12px}
-.err{color:var(--bad);min-height:18px;font-size:13px}
-.modal{position:fixed;inset:0;background:rgba(10,15,25,.5);display:grid;place-items:center;padding:16px;z-index:10}
-.modal-box{width:min(560px,100%);max-height:90vh;overflow:auto}
-.modal-box.wide{width:min(820px,100%)}
-.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;z-index:20;max-width:360px}
-.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--soft);color:var(--accent)}
-.pill.demo{background:#fff3d6;color:#8a5a00}
-.banner{background:#fff3d6;color:#6b4700;border:1px solid #f0d58a;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;gap:10px;align-items:center}
-.range{position:relative;height:46px;margin:14px 0 6px}
-.range .track{position:absolute;left:0;right:0;top:20px;height:6px;background:var(--line);border-radius:3px}
-.range .iqr{position:absolute;top:16px;height:14px;background:var(--soft);border:1px solid var(--accent);border-radius:3px}
-.range .mk{position:absolute;top:0;width:2px;height:46px}
-.range .mk i{position:absolute;top:-2px;left:4px;font-size:11px;font-style:normal;white-space:nowrap}
-.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
-.result{font-size:20px;font-weight:700}
-.bignote{border-left:4px solid var(--accent);padding:8px 12px;background:var(--soft);border-radius:0 8px 8px 0}
-.only-m{display:none!important}
-.g2{grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr))}
-.formgrid{grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr))}
-.login-card{width:min(340px,100%)}
-.login{min-height:100dvh}
+const cacheHeaders = (req, res, next) => {
+  if (/\.(js|css|html)$/.test(req.path) || req.path === '/')
+    res.set('Cache-Control', req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache');
+  next();
+};
+app.get(['/', '/index.html'], (req, res) => res.set('Cache-Control', 'no-cache').type('html').send(indexHtml()));
+app.use(cacheHeaders);
+app.use(express.static(PUB, { index: false, cacheControl: false }));
+app.use('/vendor', cacheHeaders, express.static(VENDOR, { cacheControl: false }));
 
-/* ---------- Planshet / telefon: chapdan chiqadigan hamburger menyu ---------- */
-.topbar,.scrim{display:none}
-/* ---------- Mening lotlarim ---------- */
-.nav-sub{display:none;margin:0 0 6px 14px;padding-left:6px;border-left:1px solid var(--line)}
-.nav-grp.open .nav-sub{display:block}
-nav a.cur{font-weight:600}
-.nav-sub a{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;font-size:13px}
-.cnt{font-size:11px;font-weight:600;min-width:20px;text-align:center;padding:0 6px;border-radius:999px;background:var(--soft);color:var(--accent)}
-.cnt:empty{display:none}
-.pill.st-new{background:var(--soft);color:var(--accent)}
-.pill.st-won{background:color-mix(in srgb,var(--good) 16%,transparent);color:var(--good)}
-.pill.st-lost{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}
-.pill.st-rejected{background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn)}
-select.tr{font-size:13px;padding:5px 8px}
-.tr-paid{color:var(--good)}.tr-pending{color:var(--warn)}
-td.act .cv{display:flex;flex-wrap:wrap;gap:6px}
-fieldset{border:0;padding:0;margin:0;min-width:0}
-.sec{margin-top:14px}.sec h3{margin-bottom:6px}
-textarea{width:100%;resize:vertical}
-.filebar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
-.frow{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line)}
-.frow a{color:var(--accent);text-decoration:none;overflow-wrap:anywhere}
-#mlOut th{white-space:normal;vertical-align:bottom}
-#mlOut td,#mlOut th{padding-left:8px;padding-right:8px}
-#mlOut a{color:var(--accent);text-decoration:none}
-.c-title .muted{font-weight:400}
-.actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
-@media(max-width:820px){
-  .app{grid-template-columns:minmax(0,1fr)}
-  .topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:8;height:54px;padding:0 12px;background:var(--card);border-bottom:1px solid var(--line)}
-  .burger{display:grid;place-items:center;width:42px;height:42px;padding:0;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);cursor:pointer}
-  .burger:active{background:var(--soft)}
-  .page-title{font-weight:700;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .side{position:fixed;top:0;left:0;bottom:0;height:100dvh;width:min(280px,84vw);z-index:30;border-right:1px solid var(--line);
-    padding:16px 12px calc(16px + env(safe-area-inset-bottom));overflow-y:auto;
-    transform:translateX(-102%);visibility:hidden;transition:transform .25s ease,visibility 0s linear .25s}
-  .brand{padding:4px 10px 16px}
-  nav{display:block}
-  nav a{padding:12px 14px;font-size:15px}
-  .side-foot{margin-top:auto;padding:12px 10px 0;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
-  .side-foot .btn{width:100%;min-height:40px}
-  .scrim{display:block;position:fixed;inset:0;z-index:25;background:rgba(10,15,25,.5);opacity:0;pointer-events:none;transition:opacity .25s ease}
-  body.nav-open{overflow:hidden}
-  body.nav-open .side{transform:none;visibility:visible;transition:transform .25s ease,visibility 0s;box-shadow:0 0 30px rgba(0,0,0,.3)}
-  body.nav-open .scrim{opacity:1;pointer-events:auto}
-  .main{padding:16px 14px calc(24px + env(safe-area-inset-bottom))}
+// async handlerlardagi xatolarni Express ga uzatadi
+const ah = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+/* ---------------- auth ---------------- */
+const SESSION_MS = 1000 * 60 * 60 * 24 * 14;
+const auth = ah(async (req, res, next) => {
+  const t = req.cookies.sid;
+  if (!t) return res.status(401).json({ error: 'Kirish talab qilinadi' });
+  const s = await db.get('SELECT u.id,u.username,u.full_name,u.role,s.expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=?', [t]);
+  if (!s || s.expires_at < Date.now()) return res.status(401).json({ error: 'Seans tugagan' });
+  req.user = s; next();
+});
+const need = (...roles) => (req, res, next) =>
+  roles.includes(req.user.role) ? next() : res.status(403).json({ error: 'Ruxsat yo\'q' });
+const writer = need('admin', 'analyst');
+
+const loginAttempts = new Map();
+app.post('/api/login', ah(async (req, res) => {
+  const { username, password } = req.body || {};
+  const key = req.ip + '|' + username;
+  const a = loginAttempts.get(key) || { n: 0, t: Date.now() };
+  if (Date.now() - a.t > 10 * 60 * 1000) { a.n = 0; a.t = Date.now(); }
+  if (a.n >= 8) return res.status(429).json({ error: 'Juda ko\'p urinish. 10 daqiqadan keyin qayta urining.' });
+  const u = await db.get('SELECT * FROM users WHERE username=?', [String(username || '').trim()]);
+  if (!u || !bcrypt.compareSync(String(password || ''), u.password_hash)) {
+    a.n++; loginAttempts.set(key, a);
+    return res.status(401).json({ error: 'Login yoki parol noto\'g\'ri' });
+  }
+  loginAttempts.delete(key);
+  const token = crypto.randomBytes(32).toString('hex');
+  await db.run('INSERT INTO sessions(token,user_id,expires_at) VALUES (?,?,?)', [token, u.id, Date.now() + SESSION_MS]);
+  await db.run('DELETE FROM sessions WHERE expires_at < ?', [Date.now()]);
+  res.cookie('sid', token, { httpOnly: true, sameSite: 'lax', maxAge: SESSION_MS, secure: process.env.COOKIE_SECURE === '1' });
+  res.json({ username: u.username, full_name: u.full_name, role: u.role });
+}));
+app.post('/api/logout', ah(async (req, res) => {
+  if (req.cookies.sid) await db.run('DELETE FROM sessions WHERE token=?', [req.cookies.sid]);
+  res.clearCookie('sid'); res.json({ ok: true });
+}));
+app.get('/api/me', auth, (req, res) => res.json(req.user));
+
+/* ---------------- users (admin) ---------------- */
+app.get('/api/users', auth, need('admin'), ah(async (req, res) =>
+  res.json(await db.all('SELECT id,username,full_name,role,created_at FROM users ORDER BY id'))));
+app.post('/api/users', auth, need('admin'), ah(async (req, res) => {
+  const { username, full_name, password, role } = req.body || {};
+  if (!username || !password || password.length < 6) return res.status(400).json({ error: 'Login va kamida 6 belgili parol kerak' });
+  if (!['admin', 'analyst', 'viewer'].includes(role)) return res.status(400).json({ error: 'Noto\'g\'ri rol' });
+  try {
+    await db.run('INSERT INTO users(username,full_name,password_hash,role) VALUES (?,?,?,?)',
+      [username.trim(), full_name || null, bcrypt.hashSync(password, 10), role]);
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.code === '23505') return res.status(400).json({ error: 'Bu login band' });
+    throw e;
+  }
+}));
+app.delete('/api/users/:id', auth, need('admin'), ah(async (req, res) => {
+  if (+req.params.id === req.user.id) return res.status(400).json({ error: 'O\'zingizni o\'chira olmaysiz' });
+  await db.run('DELETE FROM users WHERE id=?', [req.params.id]); res.json({ ok: true });
+}));
+app.post('/api/me/password', auth, ah(async (req, res) => {
+  const { old_password, new_password } = req.body || {};
+  const u = await db.get('SELECT * FROM users WHERE id=?', [req.user.id]);
+  if (!bcrypt.compareSync(String(old_password || ''), u.password_hash)) return res.status(400).json({ error: 'Eski parol noto\'g\'ri' });
+  if (!new_password || new_password.length < 6) return res.status(400).json({ error: 'Yangi parol kamida 6 belgi' });
+  await db.run('UPDATE users SET password_hash=? WHERE id=?', [bcrypt.hashSync(new_password, 10), u.id]);
+  res.json({ ok: true });
+}));
+
+/* ---------------- filters ---------------- */
+function lotFilter(q) {
+  const w = [], a = [];
+  if (q.q) { w.push('(product ILIKE ? OR brand ILIKE ? OR customer ILIKE ? OR winner ILIKE ? OR lot_no ILIKE ?)'); const s = `%${q.q}%`; a.push(s, s, s, s, s); }
+  if (q.product) { w.push('product = ?'); a.push(q.product); }
+  if (q.keywords) { // kalit so'zlar bo'yicha moslash (vergul bilan)
+    const ks = String(q.keywords).split(',').map(s => s.trim()).filter(Boolean);
+    if (ks.length) { w.push('(' + ks.map(() => '(product ILIKE ? OR COALESCE(brand,\'\') ILIKE ?)').join(' OR ') + ')'); ks.forEach(k => a.push(`%${k}%`, `%${k}%`)); }
+  }
+  for (const f of ['brand', 'winner', 'customer', 'customer_region', 'winner_region']) {
+    if (q[f]) { w.push(`${f} = ?`); a.push(q[f]); }
+  }
+  if (q.from) { w.push('date >= ?'); a.push(q.from); }
+  if (q.to) { w.push('date <= ?'); a.push(q.to); }
+  return { where: w.length ? 'WHERE ' + w.join(' AND ') : '', args: a };
 }
-@media(prefers-reduced-motion:reduce){.side,.scrim{transition:none!important}}
+const AND = where => (where ? where + ' AND' : 'WHERE');
+// ROUND(double precision) PostgreSQLda yo'q, shuning uchun numeric ga o'giramiz
+const R = (expr, d = 0) => `ROUND((${expr})::numeric, ${d})`;
+const DISC = 'CASE WHEN start_price>0 THEN (start_price-final_price)*100.0/start_price END';
 
-/* ---------- Telefon: kartalar, qulay inputlar ---------- */
-@media(max-width:720px){
-  h1{font-size:19px}
-  .only-m{display:flex!important}
-  .page-head{align-items:stretch;flex-direction:column;gap:10px}
-  .page-head>div:last-child{display:flex;gap:8px;flex-wrap:wrap}
-  .page-head>div:last-child .btn{flex:1;text-align:center;text-decoration:none;min-height:40px;display:inline-flex;align-items:center;justify-content:center}
-  .card{padding:14px}
-  .g4{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-  .kpi{padding:12px}.kpi .v{font-size:19px;overflow-wrap:anywhere}
-  .chart{height:240px}.chart[style]{height:260px!important}
+app.get('/api/filters', auth, ah(async (req, res) => {
+  const d = async c => (await db.all(`SELECT DISTINCT ${c} v FROM lots WHERE ${c} IS NOT NULL AND ${c}<>'' ORDER BY ${c}`)).map(r => r.v);
+  const [products, brands, winners, customers, customer_regions, winner_regions, range] = await Promise.all([
+    d('product'), d('brand'), d('winner'), d('customer'), d('customer_region'), d('winner_region'),
+    db.get('SELECT MIN(date) AS min, MAX(date) AS max, COUNT(*) AS n, COALESCE(SUM(is_demo),0) AS demo FROM lots')]);
+  res.json({ products, brands, winners, customers, customer_regions, winner_regions, range });
+}));
 
-  /* filtrlar */
-  .bar{gap:8px}
-  .bar label{flex:1 1 calc(50% - 8px);min-width:130px}
-  .bar label input,.bar label select{width:100%!important;max-width:100%}
-  .bar.only-m label{flex:1 1 auto}
-  input,select,textarea{font-size:16px;padding:9px 10px}   /* iOS zoom bo'lmasin */
-  .btn{min-height:40px}.btn.small{min-height:34px;padding:5px 11px}
-  .tabs{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-right:-14px;padding-right:14px}
-  .tabs::-webkit-scrollbar{display:none}.tab{flex:none;white-space:nowrap}
-  .banner{flex-direction:column;align-items:flex-start}
-  .pager{justify-content:space-between}
-  .range{margin-left:6px;margin-right:6px}
+/* ---------------- lots ---------------- */
+const SORTS = { date: 'date', product: 'product', final_price: 'final_price', price_per_kg: 'price_per_kg', bids: 'bids', discount: '(start_price-final_price)/NULLIF(start_price,0)' };
+app.get('/api/lots', auth, ah(async (req, res) => {
+  const { where, args } = lotFilter(req.query);
+  const page = Math.max(1, +req.query.page || 1), limit = Math.min(200, +req.query.limit || 50);
+  const sort = SORTS[req.query.sort] || 'date', dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
+  const total = (await db.get(`SELECT COUNT(*) c FROM lots ${where}`, args)).c;
+  const rows = await db.all(`SELECT *, ${R(DISC, 1)} AS discount_pct FROM lots ${where} ORDER BY ${sort} ${dir} NULLS LAST, id DESC LIMIT ? OFFSET ?`,
+    [...args, limit, (page - 1) * limit]);
+  res.json({ total, page, limit, rows });
+}));
+app.delete('/api/lots/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM lots WHERE id=?', [req.params.id]); res.json({ ok: true }); }));
 
-  /* jadval -> kartalar */
-  .tablewrap{border:0;background:transparent;overflow:visible;max-height:none;border-radius:0}
-  table,tbody{display:block;width:100%}
-  thead{display:none}
-  tbody tr{display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:10px}
-  tbody tr.click:active{background:var(--soft)}
-  .tablewrap table td:first-child{padding-left:0}
-  td,td.num{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:6px 0;border-bottom:1px dashed var(--line);text-align:right;white-space:normal}
-  td:last-child{border-bottom:0}
-  td::before{content:attr(data-label);flex:none;max-width:42%;text-align:left;font-size:12px;color:var(--muted);padding-top:1px}
-  td[data-label=""]::before{display:none}
-  td[data-label=""]{justify-content:flex-end}
-  td .cv{min-width:0;overflow-wrap:anywhere}
-  td.nowrap .cv{white-space:normal}
-  td.c-title{order:-1;display:block;text-align:left;font-weight:600;font-size:15px;padding:2px 0 8px}
-  td.c-title::before{display:none}
-  td.c-hide{display:none}
-  td .btn.small{min-height:36px;min-width:44px}
+const UPSERT = `INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
+  ON CONFLICT (lot_no) DO UPDATE SET date=EXCLUDED.date,product=EXCLUDED.product,brand=EXCLUDED.brand,unit=EXCLUDED.unit,pack_kg=EXCLUDED.pack_kg,
+  volume=EXCLUDED.volume,start_price=EXCLUDED.start_price,final_price=EXCLUDED.final_price,bids=EXCLUDED.bids,customer=EXCLUDED.customer,
+  customer_region=EXCLUDED.customer_region,winner=EXCLUDED.winner,winner_region=EXCLUDED.winner_region,price_per_kg=EXCLUDED.price_per_kg,is_demo=0
+  RETURNING (xmax = 0) AS inserted`;
+const lotArgs = r => [r.lot_no, r.date, r.product, r.brand, r.unit, r.pack_kg, r.volume, r.start_price, r.final_price, r.bids,
+  r.customer, r.customer_region, r.winner, r.winner_region, r.price_per_kg];
 
-  /* modal -> pastdan chiquvchi oyna */
-  .modal{place-items:end center;padding:0}
-  .modal-box,.modal-box.wide{width:100%;max-height:92dvh;border-radius:16px 16px 0 0;padding:16px 14px calc(16px + env(safe-area-inset-bottom))}
-  .modal-box tbody tr{background:var(--bg)}
-  .toast{left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom));max-width:none;text-align:center}
+async function importLots(rows) {
+  let ins = 0, upd = 0;
+  await db.tx(async t => {
+    for (const r of rows) { const o = await t.run(UPSERT, lotArgs(r)); o.rows[0].inserted ? ins++ : upd++; }
+  });
+  return { inserted: ins, updated: upd };
+}
+app.post('/api/lots/import', auth, writer, upload.single('file'), ah(async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Fayl tanlanmagan' });
+  let parsed;
+  try { parsed = P.parseLotsWorkbook(req.file.buffer); }
+  catch (e) { return res.status(400).json({ error: 'Faylni o\'qib bo\'lmadi: ' + e.message }); }
+  if (parsed.errors.length && !parsed.rows.length) return res.status(400).json({ error: parsed.errors[0], errors: parsed.errors });
+  const r = await importLots(parsed.rows);
+  res.json({ ...r, skipped: parsed.skipped, errors: parsed.errors.slice(0, 20) });
+}));
+app.get('/api/lots/template', auth, (req, res) => {
+  res.setHeader('Content-Disposition', 'attachment; filename="lotlar_shablon.xlsx"');
+  res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet').send(P.lotsTemplateBuffer());
+});
+app.delete('/api/demo', auth, need('admin'), ah(async (req, res) => {
+  const r = await db.run('DELETE FROM lots WHERE is_demo=1'); res.json({ deleted: r.changes });
+}));
+
+/* ---------------- analytics ---------------- */
+const median = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+app.get('/api/analytics/summary', auth, ah(async (req, res) => {
+  const { where, args } = lotFilter(req.query);
+  const s = await db.get(`SELECT COUNT(*) lots, COUNT(DISTINCT winner) winners, COUNT(DISTINCT customer) customers,
+    ${R('AVG(bids)', 1)} avg_bids, SUM(final_price*COALESCE(volume,1)) turnover_est, ${R('AVG(price_per_kg)')} avg_ppk,
+    ${R(`AVG(${DISC})`, 1)} avg_discount, MIN(date) "from", MAX(date) "to"
+    FROM lots ${where}`, args);
+  res.json(s);
+}));
+
+app.get('/api/analytics/trend', auth, ah(async (req, res) => {
+  const { where, args } = lotFilter(req.query);
+  const fmt = req.query.interval === 'week' ? 'IYYY-"W"IW' : req.query.interval === 'day' ? 'YYYY-MM-DD' : 'YYYY-MM';
+  const rows = await db.all(`SELECT to_char(date, '${fmt}') period, COUNT(*) n, ${R('AVG(price_per_kg)')} avg, ${R('MIN(price_per_kg)')} min,
+    ${R('MAX(price_per_kg)')} max, ${R('AVG(bids)', 1)} avg_bids, ${R(`AVG(${DISC})`, 1)} discount
+    FROM lots ${AND(where)} price_per_kg IS NOT NULL GROUP BY 1 ORDER BY 1`, args);
+  res.json(rows);
+}));
+
+const DIMS = { winner: 'winner', customer: 'customer', brand: 'brand', product: 'product', customer_region: 'customer_region', winner_region: 'winner_region' };
+app.get('/api/analytics/rank', auth, ah(async (req, res) => {
+  const dim = DIMS[req.query.by]; if (!dim) return res.status(400).json({ error: 'by noto\'g\'ri' });
+  const { where, args } = lotFilter(req.query);
+  const cond = `${AND(where)} ${dim} IS NOT NULL AND ${dim}<>''`;
+  const lim = Math.min(200, +req.query.limit || 20);
+  const rows = await db.all(`SELECT ${dim} AS name, COUNT(*) lots, SUM(final_price*COALESCE(volume,1)) turnover_est, ${R('AVG(price_per_kg)')} avg_ppk,
+    ${R('AVG(bids)', 1)} avg_bids, COUNT(DISTINCT product) products, MAX(date) last_date, ${R(`AVG(${DISC})`, 1)} avg_discount
+    FROM lots ${cond} GROUP BY ${dim} ORDER BY COUNT(*) DESC, 3 DESC NULLS LAST LIMIT ?`, [...args, lim]);
+  const total = (await db.get(`SELECT COUNT(*) c FROM lots ${cond}`, args)).c;
+  res.json(rows.map(r => ({ ...r, share: total ? +(r.lots * 100 / total).toFixed(1) : 0 })));
+}));
+
+// Raqobatchi/buyurtmachi tafsiloti
+app.get('/api/analytics/entity', auth, ah(async (req, res) => {
+  const role = req.query.role === 'customer' ? 'customer' : 'winner';
+  if (!req.query.name) return res.status(400).json({ error: 'name kerak' });
+  const { where, args } = lotFilter({ ...req.query, [role]: req.query.name });
+  const [byProduct, byMonth] = await Promise.all([
+    db.all(`SELECT product, COUNT(*) lots, ${R('AVG(price_per_kg)')} avg_ppk, ${R('MIN(price_per_kg)')} min_ppk FROM lots ${where} GROUP BY product ORDER BY COUNT(*) DESC`, args),
+    db.all(`SELECT to_char(date,'YYYY-MM') period, COUNT(*) lots FROM lots ${where} GROUP BY 1 ORDER BY 1`, args)]);
+  res.json({ byProduct, byMonth });
+}));
+
+// Marja tahlili: o'z mahsulotimiz tan narxi vs birja narxlari
+app.get('/api/analytics/margin', auth, ah(async (req, res) => {
+  const p = await db.get('SELECT * FROM products WHERE id=?', [parseInt(req.query.product_id, 10) || 0]);
+  if (!p) return res.status(404).json({ error: 'Mahsulot topilmadi' });
+  const keywords = req.query.keywords || p.keywords;
+  if (!keywords) return res.json({ product: p, matched: 0, note: 'Kalit so\'zlar kiritilmagan' });
+  const { where, args } = lotFilter({ ...req.query, keywords });
+  const rows = await db.all(`SELECT price_per_kg ppk FROM lots ${AND(where)} price_per_kg IS NOT NULL`, args);
+  const ppks = rows.map(r => r.ppk).sort((a, b) => a - b);
+  const q = f => ppks.length ? ppks[Math.min(ppks.length - 1, Math.floor(f * ppks.length))] : null;
+  const costKg = p.pack_kg && p.cost != null ? p.cost / p.pack_kg : null;
+  const priceKg = p.pack_kg && p.price != null ? p.price / p.pack_kg : null;
+  const winnable = costKg != null ? ppks.filter(x => x > costKg).length : null;
+  res.json({
+    product: p, cost_per_kg: costKg, price_per_kg: priceKg, keywords,
+    matched: ppks.length, min: ppks[0] ?? null, p25: q(0.25), median: median(ppks), p75: q(0.75), max: ppks[ppks.length - 1] ?? null,
+    avg: ppks.length ? ppks.reduce((s, x) => s + x, 0) / ppks.length : null,
+    profitable_share: costKg != null && ppks.length ? +(winnable * 100 / ppks.length).toFixed(1) : null,
+  });
+}));
+
+/* ---------------- products (o'z mahsulotlarimiz) ---------------- */
+app.get('/api/products', auth, ah(async (req, res) => res.json(await db.all('SELECT * FROM products ORDER BY id'))));
+const numOrNull = v => (v === '' || v === undefined || v === null ? null : Number.isFinite(+v) ? +v : null);
+const prodFields = b => [b.category || null, String(b.name || '').trim(), b.unit || null, P.packKg(b.unit) ?? numOrNull(b.pack_kg),
+  numOrNull(b.cost), numOrNull(b.price), numOrNull(b.store_markup) || 1.4, numOrNull(b.cert_fee), b.keywords || null];
+app.post('/api/products', auth, writer, ah(async (req, res) => {
+  const f = prodFields(req.body || {}); if (!f[1]) return res.status(400).json({ error: 'Nomi kerak' });
+  const r = await db.get('INSERT INTO products(category,name,unit,pack_kg,cost,price,store_markup,cert_fee,keywords) VALUES (?,?,?,?,?,?,?,?,?) RETURNING id', f);
+  res.json({ id: r.id });
+}));
+app.put('/api/products/:id', auth, writer, ah(async (req, res) => {
+  const f = prodFields(req.body || {}); if (!f[1]) return res.status(400).json({ error: 'Nomi kerak' });
+  await db.run('UPDATE products SET category=?,name=?,unit=?,pack_kg=?,cost=?,price=?,store_markup=?,cert_fee=?,keywords=? WHERE id=?', [...f, req.params.id]);
+  res.json({ ok: true });
+}));
+app.delete('/api/products/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM products WHERE id=?', [req.params.id]); res.json({ ok: true }); }));
+
+/* ---------------- Mening lotlarim ---------------- */
+app.use('/api/my-lots', auth, require('./lib/mylots')({ db, ah, writer, P }));
+
+/* ---------------- xatolar va ishga tushirish ---------------- */
+app.use('/api', (req, res) => res.status(404).json({ error: 'Topilmadi' }));
+app.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Server xatosi. Konsol loglarini tekshiring.' });
+});
+
+async function seedProducts() {
+  if ((await db.get('SELECT COUNT(*) c FROM products')).c) return;
+  const f = path.join(__dirname, 'seed', 'usta_products.xlsx');
+  if (!fs.existsSync(f)) return;
+  const items = P.parseProductsWorkbook(fs.readFileSync(f));
+  await db.tx(async t => {
+    for (const i of items) await t.run('INSERT INTO products(category,name,unit,pack_kg,cost,price,store_markup,cert_fee,keywords) VALUES (?,?,?,?,?,?,?,?,?)',
+      [i.category, i.name, i.unit, i.pack_kg, i.cost, i.price, i.store_markup, i.cert_fee, i.keywords]);
+  });
+  console.log(`Mahsulotlar yuklandi: ${items.length} ta`);
 }
 
-/* ---------- qidiruv maydoni: × (tozalash) tugmasi ---------- */
-.clr{position:relative;display:flex;align-items:center;min-width:0}
-.clr input{padding-right:30px}
-.clr-x{display:none;position:absolute;right:4px;top:50%;transform:translateY(-50%);width:26px;height:26px;padding:0;border:0;border-radius:50%;background:transparent;color:var(--muted);font:inherit;font-size:18px;line-height:1;cursor:pointer}
-.clr-x:hover{background:var(--soft);color:var(--ink)}
-.clr input:not(:placeholder-shown)+.clr-x{display:grid;place-items:center}
-@media(max-width:720px){.clr{width:100%}.clr-x{width:32px;height:32px;font-size:20px}}
+async function main() {
+  await init();
+  const pw = await ensureAdmin();
+  await seedProducts();
+  if (pw) console.log(`\n>>> Birinchi ishga tushirish. Login: admin   Parol: ${pw}\n    (kirgandan keyin parolni almashtiring)\n`);
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => console.log(`Tizim ishga tushdi: http://localhost:${port}`));
+}
+if (require.main === module) main().catch(e => { console.error('\nXATO:', e.message, '\n'); process.exit(1); });
+module.exports = { app, importLots };

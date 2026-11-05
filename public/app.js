@@ -50,7 +50,26 @@ function cardify() {
   });
 }
 let _cf = 0;
-new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); }); }).observe(document.body, { childList: true, subtree: true });
+
+/* ---------- qidiruv maydonlari: o'ng tomonda × (tozalash) tugmasi ----------
+   Maydonga data-clear atributini qo'shish kifoya. Tugma faqat matn bor paytda ko'rinadi (CSS :placeholder-shown),
+   bosilganda maydon tozalanadi va 'input' hodisasi yuboriladi, ya'ni oninput/debounce qidiruvi o'zi ishlaydi. Esc ham tozalaydi. */
+function clearable() {
+  document.querySelectorAll('input[data-clear]').forEach(inp => {
+    if (inp.parentElement.classList.contains('clr')) return;
+    if (!inp.placeholder) inp.placeholder = ' ';          // :placeholder-shown ishlashi uchun
+    const w = document.createElement('span'); w.className = 'clr';
+    inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'clr-x'; b.tabIndex = -1; b.textContent = '×'; b.title = 'Tozalash'; b.setAttribute('aria-label', 'Tozalash');
+    const wipe = () => { inp.value = ''; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); };
+    b.onmousedown = e => e.preventDefault();               // bosilganda fokus maydonda qolsin
+    b.onclick = wipe;
+    inp.addEventListener('keydown', e => { if (e.key === 'Escape' && inp.value) { e.stopPropagation(); wipe(); } });
+    w.appendChild(b);
+  });
+}
+new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); }); }).observe(document.body, { childList: true, subtree: true });
 
 /* ---------- holat ---------- */
 let ME = null, FILTERS = null, PRODUCTS = [];
@@ -175,7 +194,7 @@ async function lots() {
   $('#view').innerHTML = head('Lotlar bazasi', `${nf(f.range.n)} ta lot${f.range.min ? ` · ${f.range.min} — ${f.range.max}` : ''}`,
     canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn primary" id="imp">Excel/CSV import</button>` : '') + demoBanner() + `
   <div class="bar">
-    <label>Qidiruv<input id="fq" placeholder="mahsulot, brend, kompaniya, lot №" value="${esc(LS.f.q || '')}" style="width:240px"></label>
+    <label>Qidiruv<input data-clear id="fq" placeholder="mahsulot, brend, kompaniya, lot №" value="${esc(LS.f.q || '')}" style="width:240px"></label>
     <label>Mahsulot<select id="fproduct">${opts(f.products, LS.f.product, 'Barchasi')}</select></label>
     <label>Brend<select id="fbrand">${opts(f.brands, LS.f.brand, 'Barchasi')}</select></label>
     <label>G'olib hududi<select id="fwinner_region">${opts(f.winner_regions, LS.f.winner_region, 'Barchasi')}</select></label>
@@ -238,7 +257,7 @@ async function trend() {
   <div class="bar">
     <label>Bizning mahsulot (solishtirish uchun)<select id="tOwn"><option value="">— tanlanmagan —</option>${PRODUCTS.map(p => `<option value="${p.id}" ${TS.own == p.id ? 'selected' : ''}>${esc(p.name)} (${esc(p.unit)})</option>`).join('')}</select></label>
     <label>Birjadagi mahsulot<select id="tProd">${opts(FILTERS.products, TS.product, 'Barchasi')}</select></label>
-    <label>Kalit so'z<input id="tKw" value="${esc(TS.keywords)}" placeholder="masalan: kley" style="width:150px"></label>
+    <label>Kalit so'z<input data-clear id="tKw" value="${esc(TS.keywords)}" placeholder="masalan: kley" style="width:150px"></label>
     <label>G'olib hududi<select id="tReg">${opts(FILTERS.winner_regions, TS.region, 'Barchasi')}</select></label>
     <label>Davr<select id="tInt"><option value="month">Oylik</option><option value="week" ${TS.interval === 'week' ? 'selected' : ''}>Haftalik</option><option value="day" ${TS.interval === 'day' ? 'selected' : ''}>Kunlik</option></select></label>
   </div>${dateBar()}<div class="card"><div class="chart" style="height:360px"><canvas id="tc"></canvas></div></div><div id="tt" style="margin-top:14px"></div>`;
@@ -270,7 +289,7 @@ async function margin() {
   if (!MS.id) MS.id = PRODUCTS[0].id;
   $('#view').innerHTML = head('Marja kalkulyatori', 'Bizning tan narxni birja narxlari bilan solishtirish va ishtirok narxini hisoblash') + demoBanner() + `
   <div class="bar"><label>Bizning mahsulot<select id="mProd">${PRODUCTS.map(p => `<option value="${p.id}" ${MS.id == p.id ? 'selected' : ''}>${esc(p.name)} (${esc(p.unit)})</option>`).join('')}</select></label>
-  <label>Birja lotlarini moslash (kalit so'zlar, vergul bilan)<input id="mKw" style="width:260px"></label></div>
+  <label>Birja lotlarini moslash (kalit so'zlar, vergul bilan)<input data-clear id="mKw" style="width:260px"></label></div>
   <div id="mMarket"></div>
   <div class="card" style="margin-top:14px"><h2>Lot uchun hisob-kitob</h2><div class="formgrid" id="calc"></div><div id="calcOut" style="margin-top:14px"></div></div>`;
   bindDemo();
@@ -396,7 +415,7 @@ async function mylots(sub) {
   $('#view').innerHTML = head('Mening lotlarim — ' + ST_LABEL[sub], "O'zimiz ishtirok etgan lotlar",
     `<button class="btn" id="mlExp">Excel'ga export</button> ` + (w ? `<a class="btn small" href="/api/my-lots/template">Shablon (.xlsx)</a> <button class="btn" id="mlImp">Excel import</button> <button class="btn primary" id="mlAdd">+ Yangi lot</button>` : '')) +
     `<div class="grid g4">${cards.join('')}</div>
-    <div class="bar" style="margin-top:14px"><label>Qidiruv<input id="mlQ" placeholder="tovar, marka, lot №, shartnoma" value="${esc(MLS.q)}" style="width:240px"></label>
+    <div class="bar" style="margin-top:14px"><label>Qidiruv<input data-clear id="mlQ" placeholder="tovar, marka, lot №, shartnoma" value="${esc(MLS.q)}" style="width:240px"></label>
     ${sub === 'won' ? `<label>O'tkazma<select id="mlT"><option value="">Barchasi</option><option value="pending" ${MLS.transfer === 'pending' ? 'selected' : ''}>O'tkazilmagan</option><option value="paid" ${MLS.transfer === 'paid' ? 'selected' : ''}>O'tkazildi</option></select></label>` : ''}</div>
     <div id="mlOut"></div>`;
   const again = () => { refreshCounts(); mylots(sub); };
