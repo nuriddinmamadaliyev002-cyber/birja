@@ -9,6 +9,7 @@ const { db, init, ensureAdmin } = require('./lib/db');
 const P = require('./lib/parse');
 
 const app = express();
+app.set('trust proxy', 2);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
