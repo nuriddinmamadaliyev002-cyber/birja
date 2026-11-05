@@ -191,3 +191,19 @@ textarea{width:100%;resize:vertical}
 .cal-f{display:flex;justify-content:space-between;margin-top:6px}.cal-f button{padding:4px 8px;font-size:12px;color:var(--accent)}
 .dt-text.invalid{outline:2px solid var(--bad);outline-offset:-1px}
 .num-text{font-variant-numeric:tabular-nums}
+/* Mening lotlarim: buyurtmachi va izoh */
+#mlOut .c-cust{min-width:120px;max-width:220px;overflow-wrap:anywhere}
+#mlOut .c-note{min-width:150px;max-width:260px;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:720px){
+  /* kartaning yuqori qatori: chapda mahsulot nomi, o'ng burchakda buyurtmachi */
+  #mlOut tbody tr{display:grid;grid-template-columns:minmax(0,1fr) auto}
+  #mlOut tbody tr>td{grid-column:1/-1}
+  #mlOut tbody tr>td.c-title{grid-column:1;grid-row:1}
+  #mlOut tbody tr>td.c-cust{grid-column:2;grid-row:1;order:-1;display:block;max-width:46vw;min-width:0;padding:3px 0 8px 10px;border-bottom:0;
+    text-align:right;font-size:12px;font-weight:600;color:var(--muted)}
+  #mlOut tbody tr>td.c-title{border-bottom:0}
+  #mlOut tbody tr>td.c-cust+td{border-top:1px dashed var(--line)}   /* yuqori qator ostidagi chiziq butun kenglikda */
+  #mlOut tbody tr>td.c-note{max-width:none;min-width:0;white-space:pre-wrap}
+  #mlOut tbody tr>td.c-cust::before{display:none}
+  #mlOut tbody tr>td.c-cust:empty{display:none}
+}

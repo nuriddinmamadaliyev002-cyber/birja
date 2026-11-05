@@ -556,7 +556,7 @@ async function mylots(sub) {
   $('#view').innerHTML = head('Mening lotlarim — ' + ST_LABEL[sub], "O'zimiz ishtirok etgan lotlar",
     `<button class="btn" id="mlExp">Excel'ga export</button> ` + (w ? `<a class="btn small" href="/api/my-lots/template">Shablon (.xlsx)</a> <button class="btn" id="mlImp">Excel import</button> <button class="btn primary" id="mlAdd">+ Yangi lot</button>` : '')) +
     `<div class="grid g4">${cards.join('')}</div>
-    <div class="bar" style="margin-top:14px"><label>Qidiruv<input data-clear id="mlQ" placeholder="tovar, marka, lot №, shartnoma" value="${esc(MLS.q)}" style="width:240px"></label>
+    <div class="bar" style="margin-top:14px"><label>Qidiruv<input data-clear id="mlQ" placeholder="tovar, buyurtmachi, lot №, shartnoma" value="${esc(MLS.q)}" style="width:240px"></label>
     ${sub === 'won' ? `<label>O'tkazma<select id="mlT"><option value="">Barchasi</option><option value="pending" ${MLS.transfer === 'pending' ? 'selected' : ''}>O'tkazilmagan</option><option value="paid" ${MLS.transfer === 'paid' ? 'selected' : ''}>O'tkazildi</option></select></label>` : ''}</div>
     <div id="mlOut"></div>`;
   const again = () => { refreshCounts(); mylots(sub); };
@@ -573,7 +573,7 @@ async function mylots(sub) {
       won: `<th class="num">Yakuniy narx</th><th>Shartnoma</th><th class="num">O'tkazilishi kerak</th><th>O'tkazildi</th>`,
       lost: `<th class="num">Bizning taklif</th><th class="num">G'olib narxi</th><th>G'olib kompaniya</th>`,
       rejected: '<th>Rad etish sababi</th>' }[sub];
-    const hasSpecs = d.rows.some(r => r.specs);   // bo'sh "Xususiyatlari" ustuni joy egallamasin
+    const hasSpecs = d.rows.some(r => r.specs), hasNotes = d.rows.some(r => r.notes);   // bo'sh "Xususiyatlari" ustuni joy egallamasin
     const rowHtml = (r, i) => {
       const left = r.ends_at ? new Date(r.ends_at.replace(' ', 'T')) - Date.now() : null;
       const soon = sub === 'new' && left !== null && left > 0 && left < 864e5, late = sub === 'new' && left !== null && left <= 0;
@@ -587,15 +587,15 @@ async function mylots(sub) {
         lost: `<td class="num">${r.our_bid != null ? nf(r.our_bid) : '—'}</td><td class="num">${r.win_price != null ? nf(r.win_price) : '—'}</td><td>${esc(r.winner_name) || '—'}</td>`,
         rejected: `<td>${esc(r.reject_reason) || '—'}</td>`,
       }[sub];
-      return `<tr><td class="muted c-hide">${(d.page - 1) * d.limit + i + 1}</td><td class="small">${esc(r.product_no) || '—'}</td><td>${esc(r.lot_no)}</td>
+      return `<tr><td class="muted c-hide">${(d.page - 1) * d.limit + i + 1}</td><td class="c-cust">${esc(r.customer)}</td><td class="small">${esc(r.product_no) || '—'}</td><td>${esc(r.lot_no)}</td>
         <td class="c-title">${esc(r.product)}${r.brand ? `<div class="muted small">markasi: ${esc(r.brand)}</div>` : ''}</td>
         <td class="num">${nf(r.quantity)}</td>${hasSpecs ? `<td class="small">${esc(r.specs) || '—'}</td>` : ''}<td class="num nowrap">${r.start_price != null ? nf(r.start_price) + ' UZS' : '—'}</td>
-        <td class="nowrap">${dtf2(r.starts_at)}</td><td class="nowrap ${soon ? 'warn' : late ? 'bad' : ''}">${dtf2(r.ends_at)}</td>${extra}
+        <td class="nowrap">${dtf2(r.starts_at)}</td><td class="nowrap ${soon ? 'warn' : late ? 'bad' : ''}">${dtf2(r.ends_at)}</td>${extra}${hasNotes ? `<td class="small c-note">${esc(r.notes) || '—'}</td>` : ''}
         <td class="act">${w && sub === 'new' ? `<button class="btn small" data-q="won:${r.id}">G'olib</button><button class="btn small" data-q="lost:${r.id}">Yutqazdi</button><button class="btn small" data-q="rejected:${r.id}">Rad</button>` : ''}
           <button class="btn small" data-edit="${r.id}">${w ? '✎' : "Ko'rish"}</button>${w ? `<button class="btn small danger" data-del="${r.id}">×</button>` : ''}</td></tr>`;
     };
-    $('#mlOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>№</th><th>Tovar №</th><th>Lot №</th><th>Tovar nomi</th><th class="num">Miqdori</th>${hasSpecs ? '<th>Xususiyatlari</th>' : ''}<th class="num">Boshlang'ich narxi</th><th>Boshlanish</th><th>Tugash</th>${extraTh}<th></th></tr></thead><tbody>
-      ${d.rows.map(rowHtml).join('') || `<tr><td colspan="14" class="muted">Bu bo'limda lot yo'q</td></tr>`}</tbody></table></div>
+    $('#mlOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>№</th><th>Buyurtmachi</th><th>Tovar №</th><th>Lot №</th><th>Tovar nomi</th><th class="num">Miqdori</th>${hasSpecs ? '<th>Xususiyatlari</th>' : ''}<th class="num">Boshlang'ich narxi</th><th>Boshlanish</th><th>Tugash</th>${extraTh}${hasNotes ? '<th>Izoh</th>' : ''}<th></th></tr></thead><tbody>
+      ${d.rows.map(rowHtml).join('') || `<tr><td colspan="16" class="muted">Bu bo'limda lot yo'q</td></tr>`}</tbody></table></div>
       <div class="pager"><span class="muted">${nf(d.total)} ta lot</span><button class="btn small" id="mlPp" ${MLS.page <= 1 ? 'disabled' : ''}>←</button><span>${MLS.page} / ${pages}</span><button class="btn small" id="mlPn" ${MLS.page >= pages ? 'disabled' : ''}>→</button></div>`;
     $('#mlPp').onclick = () => { MLS.page--; load(); }; $('#mlPn').onclick = () => { MLS.page++; load(); };
     document.querySelectorAll('[data-edit]').forEach(b => b.onclick = e => { e.preventDefault(); lotForm(+b.dataset.edit, null, again); });
@@ -622,7 +622,7 @@ async function lotForm(id, preset, onDone) {
   const tl = x => x ? String(x).replace(' ', 'T').slice(0, 16) : '';
   const f = (k, label, type = 'text', extra = '') => `<label>${label}<input id="m_${k}" type="${type}" value="${esc(type === 'datetime-local' ? tl(L[k]) : L[k] ?? '')}" ${extra}></label>`;
   modal(`<h2>${id ? (ro ? "Lot ma'lumoti" : 'Lotni tahrirlash') : 'Yangi lot'}</h2><fieldset ${ro ? 'disabled' : ''}>
-    <div class="formgrid">${f('lot_no', 'Lot №')}${f('product_no', 'Tovar №')}${f('product', 'Tovar nomi')}${f('brand', 'Markasi')}${f('quantity', 'Miqdori', 'number', 'step="any"')}${f('specs', 'Tovarning xususiyatlari')}
+    <div class="formgrid">${f('lot_no', 'Lot №')}${f('product_no', 'Tovar №')}${f('product', 'Tovar nomi')}${f('customer', 'Buyurtmachi')}${f('brand', 'Markasi')}${f('quantity', 'Miqdori', 'number', 'step="any"')}${f('specs', 'Tovarning xususiyatlari')}
       ${f('start_price', "Boshlang'ich narx (so'm)", 'number', 'step="any"')}${f('starts_at', 'Boshlanish sanasi', 'datetime-local')}${f('ends_at', 'Tugash sanasi', 'datetime-local')}
       <label>Holati<select id="m_status">${MYSUBS.map(([k, t]) => `<option value="${k}" ${L.status === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
     <div id="secBid" class="formgrid sec">${f('our_bid', 'Bizning taklif narxi', 'number', 'step="any"')}<label><span id="lblWin"></span><input id="m_win_price" type="number" step="any" value="${esc(L.win_price ?? '')}"></label>
@@ -672,7 +672,7 @@ async function lotForm(id, preset, onDone) {
   if ($('#mSave')) $('#mSave').onclick = async () => {
     if (document.querySelector('#modalBox .dt-text.invalid')) return toast('Sana/vaqt noto\'g\'ri. Format: kk.oo.yyyy ss:dd');
     const body = {};
-    ['lot_no', 'product_no', 'product', 'brand', 'quantity', 'specs', 'start_price', 'starts_at', 'ends_at', 'status', 'reject_reason', 'our_bid', 'win_price', 'winner_name',
+    ['lot_no', 'product_no', 'product', 'brand', 'customer', 'quantity', 'specs', 'start_price', 'starts_at', 'ends_at', 'status', 'reject_reason', 'our_bid', 'win_price', 'winner_name',
       'contract_no', 'contract_date', 'amount_due', 'transfer_status', 'transferred_at', 'notes'].forEach(k => body[k] = $('#m_' + k).value);
     try {
       const r = await api(id ? '/my-lots/' + id : '/my-lots', { method: id ? 'PUT' : 'POST', json: body });
