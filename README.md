@@ -29,6 +29,14 @@ Menyu: Birja mahsulotlari. "Lotlar bazasi" → "+ Yangi lot" dagi «Mahsulot nom
 - Nomi o'zgartirilsa, shu nomdagi lotlar ham yangilanadi. Mahsulot o'chirilsa, lotlar o'zgarmaydi.
 - Ro'yxatda yo'q nom yozilsa ham lotni saqlash mumkin, lekin oynada eslatma chiqadi.
 
+## Raqobat va buyurtmachilar
+- Hudud filtri: «G'olib hududi» va «Buyurtmachi hududi» (ikkalasi birga ham ishlaydi) hamma tablarga ta'sir qiladi. Jadvalda korxonaning eng ko'p uchraydigan hududi ko'rsatiladi. «Qidiruv» nom bo'yicha qidiradi.
+- Bir korxonaning turlicha yozilgan nomlarini birlashtirish (G'oliblar va Buyurtmachilar tablarida, admin va analyst):
+  - qatorlarni belgilab «Birlashtirish» tugmasini bosing yoki «O'xshash nomlarni topish» ga bering. U harf, tirnoq/apostrof, MCHJ/XK/YTT kabi shakl va so'z tartibi farqini («Aniq»), shuningdek 1–3 harflik xatoni («Taxminiy») topadi. Taxminiylarni birlashtirishdan oldin tekshiring.
+  - Yakuniy nomni tanlaysiz yoki o'zingiz yozasiz. Lotlardagi g'olib va buyurtmachi ustunlarida hamda «Mening lotlarim»da (buyurtmachi, g'olib) nomlar almashtiriladi.
+  - Variantlar `name_aliases` jadvaliga yoziladi: keyingi Excel importlarda va qo'lda kiritishda ular avtomatik yakuniy nomga almashadi. Har bir birlashtirish `name_merge_log` jadvaliga (qaysi lotlar o'zgargani bilan) yoziladi.
+  - Dastur ichida bekor qilish yo'q. Nomlar faqat aniq moslik bo'yicha almashtiriladi (katta-kichik harf va ortiqcha bo'shliq e'tiborga olinmaydi).
+
 ## Mening lotlarim (o'zimiz ishtirok etgan lotlar)
 Menyu: Mening lotlarim → Yangi / G'olib bo'lingan / Yutqazilgan / Rad etilgan.
 - Lotni qo'lda ("+ Yangi lot") yoki xarid.uzex.uz dagi "mening lotlarim" jadvalini Excel/CSV qilib import qilish mumkin (status matnidan holat avtomatik aniqlanadi; shablon shu yerda).
@@ -44,4 +52,4 @@ admin (hammasi) · analyst (import, tahrir) · viewer (faqat ko'rish)
 HTTPS ortida ishlating, `COOKIE_SECURE=1`. Bazadan muntazam nusxa oling: `pg_dump birja > backup.sql`.
 
 ## Tuzilma
-server.js (API) · lib/db.js (PostgreSQL, sxema) · lib/parse.js (Excel tahlili) · public/ (interfeys) · seed/ (mahsulotlar Excel)
+server.js (API) · lib/db.js (PostgreSQL, sxema) · lib/parse.js (Excel tahlili) · lib/names.js (korxona nomlarini solishtirish) · public/ (interfeys) · seed/ (mahsulotlar Excel)

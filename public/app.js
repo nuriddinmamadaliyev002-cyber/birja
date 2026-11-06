@@ -603,31 +603,104 @@ async function margin() {
 }
 
 /* ---------- Reyting ---------- */
-const RS = { by: 'winner' };
+const RS = { by: 'winner', winner_region: '', customer_region: '', name: '', sel: new Set() };
 async function rank() {
   if (!FILTERS.range.n) { $('#view').innerHTML = head('Raqobat va buyurtmachilar') + emptyState(); return; }
   const tabs = [['winner', 'G\'oliblar (raqobatchilar)'], ['customer', 'Buyurtmachilar'], ['brand', 'Brendlar'], ['product', 'Mahsulotlar'], ['customer_region', 'Buyurtmachi hududlari'], ['winner_region', 'G\'olib hududlari']];
+  const co = RS.by === 'winner' || RS.by === 'customer';      // korxona jadvallari: tafsilot va birlashtirish shu yerda
+  const merge = co && canWrite();
+  const regSel = (id, label, list, cur) => `<label>${label}<select id="${id}">${opts(list, cur, 'Barchasi')}</select></label>`;
   $('#view').innerHTML = head('Raqobat va buyurtmachilar', 'Kim nimani yutayapti, kim nimani sotib olayapti') + demoBanner() + dateBar() +
-    `<div class="tabs">${tabs.map(([k, t]) => `<div class="tab ${RS.by === k ? 'on' : ''}" data-k="${k}">${t}</div>`).join('')}</div><div id="rk"></div>`;
+    `<div class="tabs">${tabs.map(([k, t]) => `<div class="tab ${RS.by === k ? 'on' : ''}" data-k="${k}">${t}</div>`).join('')}</div>
+    <div class="bar">
+      <label>Qidiruv<input data-clear id="rkQ" placeholder="nomi bo'yicha" value="${esc(RS.name)}" style="width:220px"></label>
+      ${RS.by !== 'winner_region' ? regSel('rkWR', "G'olib hududi", FILTERS.winner_regions, RS.winner_region) : ''}
+      ${RS.by !== 'customer_region' ? regSel('rkCR', 'Buyurtmachi hududi', FILTERS.customer_regions, RS.customer_region) : ''}
+      ${merge ? `<button class="btn" id="rkSim">O'xshash nomlarni topish</button><button class="btn primary" id="rkMerge" disabled>Birlashtirish</button>` : ''}
+    </div><div id="rk"></div>`;
   bindDemo(); bindDateBar(load);
-  document.querySelectorAll('.tab').forEach(t => t.onclick = () => { RS.by = t.dataset.k; rank(); });
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => { RS.by = t.dataset.k; RS.name = ''; RS.sel.clear(); rank(); });
+  $('#rkQ').oninput = debounce(() => { RS.name = $('#rkQ').value.trim(); load(); }, 250);
+  if ($('#rkWR')) $('#rkWR').onchange = () => { RS.winner_region = $('#rkWR').value; load(); };
+  if ($('#rkCR')) $('#rkCR').onchange = () => { RS.customer_region = $('#rkCR').value; load(); };
+  let rows = [];
+  const regionQ = () => { const q = {}; if (RS.by !== 'winner_region') q.winner_region = RS.winner_region; if (RS.by !== 'customer_region') q.customer_region = RS.customer_region; return q; };
+
   async function load() {
-    const rows = await api('/analytics/rank?' + qs({ by: RS.by, limit: 100, from: G.from, to: G.to }));
-    const clickable = RS.by === 'winner' || RS.by === 'customer';
-    $('#rk').innerHTML = `<div class="tablewrap"><table><thead><tr><th>#</th><th>Nomi</th><th class="num">Lotlar</th><th class="num">Ulush</th><th class="num">Taxm. aylanma</th><th class="num">O'rt. 1 kg narx</th><th class="num">O'rt. takl.</th><th class="num">Tushish</th><th class="num">Mahsulot turi</th><th>Oxirgi lot</th></tr></thead><tbody>
-    ${rows.map((r, i) => `<tr class="${clickable ? 'click' : ''}" data-n="${esc(r.name)}"><td class="muted c-hide">${i + 1}</td><td class="c-title">${i + 1}. ${esc(r.name)}</td><td class="num"><b>${r.lots}</b></td><td class="num">${pct(r.share)}</td><td class="num">${mln(r.turnover_est)}</td><td class="num">${nf(r.avg_ppk)}</td><td class="num">${nf(r.avg_bids, 1)}</td><td class="num">${pct(r.avg_discount)}</td><td class="num">${r.products}</td><td class="nowrap">${r.last_date}</td></tr>`).join('')}</tbody></table></div>
-    ${clickable ? '<p class="muted small">Tafsilot uchun qatorni bosing.</p>' : ''}`;
-    if (clickable) document.querySelectorAll('tr.click').forEach(tr => tr.onclick = () => entity(tr.dataset.n));
+    rows = await api('/analytics/rank?' + qs({ by: RS.by, limit: 100, from: G.from, to: G.to, name: RS.name, ...regionQ() }));
+    const shown = new Set(rows.map(r => r.name)); [...RS.sel].forEach(n => { if (!shown.has(n)) RS.sel.delete(n); });   // ko'rinmay qolgan qator tanlovi olib tashlanadi
+    const th = (t, c = '') => `<th${c ? ` class="${c}"` : ''}>${t}</th>`;
+    $('#rk').innerHTML = `<div class="tablewrap"><table><thead><tr>${merge ? '<th class="c-sel"><input type="checkbox" id="rkAll" aria-label="Hammasini tanlash"></th>' : ''}<th>#</th><th>Nomi</th>${co ? '<th>Hudud</th>' : ''}${th('Lotlar', 'num')}${th('Ulush', 'num')}${th('Taxm. aylanma', 'num')}${th('O\'rt. 1 kg narx', 'num')}${th('O\'rt. takl.', 'num')}${th('Tushish', 'num')}${th('Mahsulot turi', 'num')}<th>Oxirgi lot</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr class="${co ? 'click' : ''} ${RS.sel.has(r.name) ? 'sel' : ''}" data-n="${esc(r.name)}">${merge ? `<td class="c-sel"><input type="checkbox" class="rk-ck" data-n="${esc(r.name)}" aria-label="Tanlash" ${RS.sel.has(r.name) ? 'checked' : ''}></td>` : ''}<td class="muted c-hide">${i + 1}</td><td class="c-title">${i + 1}. ${esc(r.name)}</td>${co ? `<td class="small muted">${esc(r.region || '')}</td>` : ''}<td class="num"><b>${r.lots}</b></td><td class="num">${pct(r.share)}</td><td class="num">${mln(r.turnover_est)}</td><td class="num">${nf(r.avg_ppk)}</td><td class="num">${nf(r.avg_bids, 1)}</td><td class="num">${pct(r.avg_discount)}</td><td class="num">${r.products}</td><td class="nowrap">${r.last_date}</td></tr>`).join('')
+      || `<tr><td colspan="12" class="muted">Hech narsa topilmadi</td></tr>`}</tbody></table></div>
+    ${co ? `<p class="muted small">Tafsilot uchun qatorni bosing.${merge ? " Bir korxonaning turlicha yozilgan nomlarini belgilab, «Birlashtirish» tugmasi bilan bitta nomga keltirishingiz mumkin." : ''}</p>` : ''}`;
+    if (co) document.querySelectorAll('tr.click').forEach(tr => tr.onclick = () => entity(tr.dataset.n));
+    if (merge) {
+      document.querySelectorAll('#rk .c-sel').forEach(td => td.onclick = e => e.stopPropagation());   // belgilash qator tafsilotini ochmasin
+      document.querySelectorAll('.rk-ck').forEach(c => c.onchange = () => { c.checked ? RS.sel.add(c.dataset.n) : RS.sel.delete(c.dataset.n); c.closest('tr').classList.toggle('sel', c.checked); syncSel(); });
+      $('#rkAll').onchange = e => { document.querySelectorAll('.rk-ck').forEach(c => { c.checked = e.target.checked; e.target.checked ? RS.sel.add(c.dataset.n) : RS.sel.delete(c.dataset.n); c.closest('tr').classList.toggle('sel', c.checked); }); syncSel(); };
+      syncSel();
+    }
+  }
+  function syncSel() {
+    const b = $('#rkMerge'); if (!b) return;
+    b.disabled = RS.sel.size < 2; b.textContent = RS.sel.size ? `Birlashtirish (${RS.sel.size})` : 'Birlashtirish';
+    const all = $('#rkAll'); if (all) { const n = document.querySelectorAll('.rk-ck').length; all.checked = n > 0 && RS.sel.size === n; all.disabled = !n; }
   }
   async function entity(name) {
     const role = RS.by === 'customer' ? 'customer' : 'winner';
-    const d = await api('/analytics/entity?' + qs({ role, name, from: G.from, to: G.to }));
+    const d = await api('/analytics/entity?' + qs({ role, name, from: G.from, to: G.to, ...regionQ() }));
     modal(`<h2>${esc(name)}</h2><p class="muted">${role === 'winner' ? 'Yutgan lotlar' : 'Sotib olgan mahsulotlar'}</p>
       <table><thead><tr><th>Mahsulot</th><th class="num">Lotlar</th><th class="num">O'rt. 1 kg</th><th class="num">Eng past 1 kg</th></tr></thead><tbody>
       ${d.byProduct.map(r => `<tr><td class="c-title">${esc(r.product)}</td><td class="num">${r.lots}</td><td class="num">${nf(r.avg_ppk)}</td><td class="num">${nf(r.min_ppk)}</td></tr>`).join('')}</tbody></table>
       <h3 style="margin-top:14px">Oylar bo'yicha</h3><div>${d.byMonth.map(m => `<span class="pill" style="margin:2px">${m.period}: ${m.lots}</span>`).join('')}</div>
       <div style="text-align:right;margin-top:14px"><button class="btn" onclick="closeModal()">Yopish</button></div>`, true);
   }
+
+  /* ----- birlashtirish ----- */
+  // items: [{ name, lots, region }]. Belgilangan nomlar yakuniy nom ostiga o'tkaziladi. back: birlashtirgach nima qilish (o'xshashlar ro'yxatiga qaytish)
+  function mergeDialog(items, back) {
+    const top = [...items].sort((a, b) => b.lots - a.lots)[0];
+    modal(`<h2>Korxonalarni birlashtirish</h2>
+      <p class="muted small">Belgilangan nomlar bitta nomga almashtiriladi: lotlardagi g'olib va buyurtmachi ustunlarida hamda «Mening lotlarim»da. Keyingi importlarda ham shu nomlar avtomatik almashtiriladi. Bu amalni dastur ichidan qaytarib bo'lmaydi.</p>
+      <div class="tablewrap" style="margin:10px 0"><table><thead><tr><th class="c-sel"></th><th>Nomi</th><th>Hudud</th><th class="num">Lotlar</th><th>Yakuniy</th></tr></thead><tbody>
+      ${items.map((x, i) => `<tr><td class="c-sel"><input type="checkbox" class="mg-ck" data-i="${i}" checked aria-label="Birlashtirish"></td><td class="c-title">${esc(x.name)}</td><td class="small muted">${esc(x.region || '')}</td><td class="num">${x.lots}</td>
+        <td><input type="radio" name="mgT" class="mg-rd" data-i="${i}" ${x === top ? 'checked' : ''} aria-label="Yakuniy nom qilish"></td></tr>`).join('')}</tbody></table></div>
+      <label style="display:block">Yakuniy nom (o'zgartirishingiz mumkin)<input id="mgName" value="${esc(top.name)}" style="width:100%" autocomplete="off"></label>
+      <div id="mgInfo" class="muted small" style="margin-top:8px"></div>
+      <div class="actions"><button class="btn" type="button" id="mgCancel">Bekor</button><button class="btn primary" type="button" id="mgOk">Birlashtirish</button></div>`, true);
+    const checked = () => [...document.querySelectorAll('#modalBox .mg-ck')].filter(c => c.checked).map(c => items[+c.dataset.i]);
+    const info = () => {
+      const tgt = $('#mgName').value.replace(/\s+/g, ' ').trim(), from = checked().filter(x => x.name !== tgt);
+      $('#mgInfo').innerHTML = from.length ? `«${esc(tgt || '…')}» nomiga o'tadi: ${from.length} ta nom, ${nf(from.reduce((s, x) => s + x.lots, 0))} ta lot.` : '<span class="warn">Yakuniy nomdan farq qiladigan kamida bitta nom belgilang.</span>';
+      $('#mgOk').disabled = !tgt || !from.length;
+    };
+    document.querySelectorAll('#modalBox .mg-rd').forEach(r => r.onchange = () => { $('#mgName').value = items[+r.dataset.i].name; info(); });
+    document.querySelectorAll('#modalBox .mg-ck').forEach(c => c.onchange = info); $('#mgName').oninput = info; info();
+    $('#mgCancel').onclick = () => back ? back() : closeModal();
+    $('#mgOk').onclick = async () => {
+      const tgt = $('#mgName').value.trim(); $('#mgOk').disabled = true;
+      try {
+        const r = await api('/names/merge', { method: 'POST', json: { target: tgt, names: checked().map(x => x.name) } });
+        toast(`Birlashtirildi: ${r.merged} ta nom → «${r.target}» · ${nf(r.updated_lots)} ta lot yangilandi`);
+        RS.sel.clear(); await refreshMeta(); await load();
+        back ? back() : closeModal();
+      } catch (e) { toast(e.message); $('#mgOk').disabled = false; }
+    };
+  }
+  async function similarDialog() {
+    const kind = RS.by === 'customer' ? 'customer' : 'winner';
+    modal('<h2>O\'xshash nomlar</h2><p class="muted">Qidirilmoqda…</p>', true);
+    let d; try { d = await api('/names/similar?kind=' + kind); } catch (e) { closeModal(); return toast(e.message); }
+    modal(`<h2>O'xshash nomlar</h2>
+      <p class="muted small">${nf(d.total_names)} ta turli nom tekshirildi${d.found ? `, ${nf(d.found)} ta guruh topildi${d.found > d.groups.length ? ` (birinchi ${d.groups.length} tasi ko'rsatilgan)` : ''}` : ''}. «Aniq» — nomlar faqat yozilishi bilan farq qiladi (harf, tirnoq, MCHJ/XK, so'z tartibi). «Taxminiy» — 1–3 harf farq: birlashtirishdan oldin tekshiring.${d.fuzzy ? '' : ' Nomlar juda ko\'p bo\'lgani uchun faqat aniq moslar qidirildi.'}</p>
+      <div style="max-height:56vh;overflow:auto">${d.groups.map((g, gi) => `<div class="grp"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px"><span class="pill ${g.exact ? '' : 'demo'}">${g.exact ? 'Aniq' : 'Taxminiy'}</span><button class="btn small primary" data-grp="${gi}">Birlashtirish</button></div>
+        ${g.items.map(x => `<div class="grp-i"><span>${esc(x.name)}</span><span class="muted small">${esc(x.region || '')} · ${x.lots} ta lot</span></div>`).join('')}</div>`).join('') || '<p>O\'xshash nomlar topilmadi.</p>'}</div>
+      <div style="text-align:right;margin-top:14px"><button class="btn" onclick="closeModal()">Yopish</button></div>`, true);
+    document.querySelectorAll('#modalBox [data-grp]').forEach(b => b.onclick = () => mergeDialog(d.groups[+b.dataset.grp].items, similarDialog));   // faqat oyna ichida: chap menyudagi data-g bilan aralashmasin
+  }
+  if ($('#rkMerge')) $('#rkMerge').onclick = () => mergeDialog(rows.filter(r => RS.sel.has(r.name)).map(r => ({ name: r.name, lots: r.lots, region: r.region })));
+  if ($('#rkSim')) $('#rkSim').onclick = similarDialog;
   await load();
 }
 

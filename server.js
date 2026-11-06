@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const { db, init, ensureAdmin } = require('./lib/db');
 const P = require('./lib/parse');
+const { aliasKey, findSimilar } = require('./lib/names');
 
 const app = express();
 app.set('trust proxy', 2);
@@ -177,8 +178,9 @@ async function lotBody(b) {
   if ([start_price, volume, bids].some(x => Number.isNaN(x) || (x !== null && x < 0))) return { error: 'Narx, hajm yoki takliflar sonida xato' };
   const un = unit ? await db.get('SELECT pack_kg FROM units WHERE lower(name)=lower(?)', [unit]) : null;
   const pack_kg = un && un.pack_kg != null ? un.pack_kg : P.packKg(unit);
+  const al = await loadAliases();
   return { v: [lot_no, date, product, t(b.brand), unit, pack_kg, volume, start_price, final_price, bids === null ? null : Math.round(bids),
-    t(b.customer), t(b.customer_region), t(b.winner), t(b.winner_region), pack_kg ? final_price / pack_kg : null] };
+    canonName(al, t(b.customer)), t(b.customer_region), canonName(al, t(b.winner)), t(b.winner_region), pack_kg ? final_price / pack_kg : null] };
 }
 const dupLot = (e, res) => { if (e.code === '23505') { res.status(400).json({ error: 'Bu lot raqami bazada allaqachon bor' }); return true; } return false; };
 app.post('/api/lots', auth, writer, ah(async (req, res) => {
@@ -208,8 +210,14 @@ const UPSERT = `INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,
 const lotArgs = r => [r.lot_no, r.date, r.product, r.brand, r.unit, r.pack_kg, r.volume, r.start_price, r.final_price, r.bids,
   r.customer, r.customer_region, r.winner, r.winner_region, r.price_per_kg];
 
+// Birlashtirilgan korxona nomlari (variant -> asosiy nom): yangi import va qo'lda kiritilgan lotlarda ham qo'llanadi
+async function loadAliases() { return new Map((await db.all('SELECT alias_key, canonical FROM name_aliases')).map(r => [r.alias_key, r.canonical])); }
+const canonName = (al, s) => (s && al.get(aliasKey(s))) || s;
+
 async function importLots(rows) {
   let ins = 0, upd = 0;
+  const al = await loadAliases();
+  for (const r of rows) { r.winner = canonName(al, r.winner); r.customer = canonName(al, r.customer); }
   // nomenklaturadagi birlik bo'lsa, kg hajmi shu yerdan olinadi (nomdan taxmin qilishdan ustun)
   const um = new Map((await db.all('SELECT name, pack_kg FROM units WHERE pack_kg IS NOT NULL')).map(u => [u.name.toLowerCase(), u.pack_kg]));
   for (const r of rows) { const pk = r.unit && um.get(r.unit.toLowerCase()); if (pk) { r.pack_kg = pk; r.price_per_kg = r.final_price / pk; } }
@@ -260,12 +268,15 @@ const DIMS = { winner: 'winner', customer: 'customer', brand: 'brand', product: 
 app.get('/api/analytics/rank', auth, ah(async (req, res) => {
   const dim = DIMS[req.query.by]; if (!dim) return res.status(400).json({ error: 'by noto\'g\'ri' });
   const { where, args } = lotFilter(req.query);
-  const cond = `${AND(where)} ${dim} IS NOT NULL AND ${dim}<>''`;
+  const condAll = `${AND(where)} ${dim} IS NOT NULL AND ${dim}<>''`;
+  const nm = String(req.query.name || '').trim(), cond = nm ? `${condAll} AND ${dim} ILIKE ?` : condAll;   // name: nom bo'yicha qidiruv
   const lim = Math.min(200, +req.query.limit || 20);
+  const regDim = { winner: 'winner_region', customer: 'customer_region' }[req.query.by];   // korxonaning eng ko'p uchraydigan hududi
   const rows = await db.all(`SELECT ${dim} AS name, COUNT(*) lots, SUM(final_price*COALESCE(volume,1)) turnover_est, ${R('AVG(price_per_kg)')} avg_ppk,
-    ${R('AVG(bids)', 1)} avg_bids, COUNT(DISTINCT product) products, MAX(date) last_date, ${R(`AVG(${DISC})`, 1)} avg_discount
-    FROM lots ${cond} GROUP BY ${dim} ORDER BY COUNT(*) DESC, 3 DESC NULLS LAST LIMIT ?`, [...args, lim]);
-  const total = (await db.get(`SELECT COUNT(*) c FROM lots ${cond}`, args)).c;
+    ${R('AVG(bids)', 1)} avg_bids, COUNT(DISTINCT product) products, MAX(date) last_date, ${R(`AVG(${DISC})`, 1)} avg_discount,
+    ${regDim ? `MODE() WITHIN GROUP (ORDER BY ${regDim})` : 'NULL'} AS region
+    FROM lots ${cond} GROUP BY ${dim} ORDER BY COUNT(*) DESC, 3 DESC NULLS LAST LIMIT ?`, [...args, ...(nm ? [`%${nm}%`] : []), lim]);
+  const total = (await db.get(`SELECT COUNT(*) c FROM lots ${condAll}`, args)).c;   // ulush qidiruvga emas, filtrlarga nisbatan
   res.json(rows.map(r => ({ ...r, share: total ? +(r.lots * 100 / total).toFixed(1) : 0 })));
 }));
 
@@ -383,6 +394,41 @@ app.delete('/api/exchange-products/:id', auth, writer, ah(async (req, res) => {
 }));
 // lotlarda uchraydigan, lekin ro'yxatda yo'q mahsulot nomlarini qo'shish
 app.post('/api/exchange-products/sync', auth, writer, ah(async (req, res) => res.json({ added: (await db.run(EXCH_FROM_LOTS)).changes })));
+
+/* ---------------- korxona nomlarini birlashtirish ---------------- */
+// O'xshash (bir korxonaning turlicha yozilgan) nomlar guruhlari. kind: winner | customer
+app.get('/api/names/similar', auth, writer, ah(async (req, res) => {
+  const col = req.query.kind === 'customer' ? 'customer' : 'winner', rc = col + '_region';
+  const items = await db.all(`SELECT ${col} AS name, COUNT(*)::int AS lots, MODE() WITHIN GROUP (ORDER BY ${rc}) AS region, MAX(date) AS last_date
+    FROM lots WHERE ${col} IS NOT NULL AND ${col}<>'' GROUP BY ${col}`);
+  const r = findSimilar(items);
+  res.json({ total_names: items.length, fuzzy: r.fuzzy, found: r.groups.length, groups: r.groups.slice(0, 200) });
+}));
+// names nomlari target nomi ostida birlashtiriladi: lotlardagi g'olib va buyurtmachi ustunlarida ("Mening lotlarim"da ham) almashtiriladi,
+// variantlar alias sifatida saqlanadi (keyingi importlarda o'zi almashtiriladi), o'zgargan lotlar jurnalga yoziladi
+app.post('/api/names/merge', auth, writer, ah(async (req, res) => {
+  const b = req.body || {};
+  let target = String(b.target ?? '').replace(/\s+/g, ' ').trim();
+  const names = [...new Set((Array.isArray(b.names) ? b.names : []).map(x => String(x ?? '').trim()).filter(Boolean))];
+  if (!target) return res.status(400).json({ error: 'Yakuniy nomni kiriting' });
+  if (target.length > 300 || names.length > 100) return res.status(400).json({ error: 'Nom juda uzun yoki nomlar soni ortiqcha' });
+  const out = await db.tx(async t => {
+    const prev = await t.get('SELECT canonical FROM name_aliases WHERE alias_key=?', [aliasKey(target)]);
+    if (prev) target = prev.canonical;                          // yakuniy nom boshqa nomning varianti bo'lsa, o'sha asosiy nomga ulanadi
+    const from = names.filter(n => n !== target);
+    if (!from.length) return null;
+    const ids = async (col) => (await t.run(`UPDATE lots SET ${col}=? WHERE ${col} = ANY(?) RETURNING id`, [target, from])).rows.map(r => r.id);
+    const wIds = await ids('winner'), cIds = await ids('customer');
+    await t.run('UPDATE my_lots SET customer=? WHERE customer = ANY(?)', [target, from]);
+    await t.run('UPDATE my_lots SET winner_name=? WHERE winner_name = ANY(?)', [target, from]);
+    await t.run('UPDATE name_aliases SET canonical=? WHERE canonical = ANY(?)', [target, from]);   // zanjir: oldingi variantlar ham yangi nomga ulanadi
+    for (const n of from) await t.run('INSERT INTO name_aliases(alias_key, canonical) VALUES (?,?) ON CONFLICT (alias_key) DO UPDATE SET canonical=EXCLUDED.canonical', [aliasKey(n), target]);
+    await t.run('INSERT INTO name_merge_log(user_id, target, names, winner_lot_ids, customer_lot_ids) VALUES (?,?,?,?,?)', [req.user.id, target, from, wIds, cIds]);
+    return { target, merged: from.length, updated_lots: new Set([...wIds, ...cIds]).size };
+  });
+  if (!out) return res.status(400).json({ error: 'Yakuniy nomdan farq qiladigan kamida bitta nom kerak' });
+  res.json(out);
+}));
 
 /* ---------------- Mening lotlarim ---------------- */
 app.use('/api/my-lots', auth, require('./lib/mylots')({ db, ah, writer, P }));

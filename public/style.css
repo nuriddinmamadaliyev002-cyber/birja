@@ -238,3 +238,8 @@ tr.sel>td{background:var(--soft)}
 .sug-i b{color:var(--accent);font-weight:700}
 .sug-0{color:var(--muted)}
 @media(max-width:720px){.sug-i,.sug-0{padding:11px 12px}}
+
+/* o'xshash nomlar guruhlari */
+.grp{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:10px}
+.grp-i{display:flex;justify-content:space-between;gap:12px;padding:3px 0}
+.grp-i>span:first-child{overflow-wrap:anywhere}
