@@ -344,6 +344,35 @@ app.delete('/api/units/:id', auth, writer, ah(async (req, res) => { await db.run
 // lotlarda uchraydigan, lekin ro'yxatda yo'q birliklarni qo'shish
 app.post('/api/units/sync', auth, writer, ah(async (req, res) => res.json({ added: (await db.run(UNITS_FROM_LOTS)).changes })));
 
+/* ---------------- birja mahsulotlari nomenklaturasi ---------------- */
+// "Lotlar bazasi" -> "+ Yangi lot" dagi "Mahsulot nomi" qidiruvli ro'yxati shu jadvaldan to'ladi
+const exchBody = b => { const name = String(b.name || '').replace(/\s+/g, ' ').trim(); return name ? { name } : { error: 'Mahsulot nomini kiriting' }; };
+const EXCH_FROM_LOTS = `INSERT INTO exchange_products(name) SELECT DISTINCT ON (lower(product)) product FROM lots WHERE product IS NOT NULL AND product<>'' ORDER BY lower(product), product ON CONFLICT DO NOTHING`;
+app.get('/api/exchange-products', auth, ah(async (req, res) => res.json(await db.all(
+  'SELECT e.*, (SELECT COUNT(*) FROM lots l WHERE l.product=e.name)::int AS used FROM exchange_products e ORDER BY lower(e.name)'))));
+app.post('/api/exchange-products', auth, writer, ah(async (req, res) => {
+  const x = exchBody(req.body || {}); if (x.error) return res.status(400).json({ error: x.error });
+  try { const r = await db.get('INSERT INTO exchange_products(name) VALUES (?) RETURNING id', [x.name]); res.json({ id: r.id }); }
+  catch (e) { if (e.code === '23505') return res.status(400).json({ error: 'Bu mahsulot ro\'yxatda allaqachon bor' }); throw e; }
+}));
+app.put('/api/exchange-products/:id', auth, writer, ah(async (req, res) => {
+  const id = parseInt(req.params.id, 10) || 0, x = exchBody(req.body || {}); if (x.error) return res.status(400).json({ error: x.error });
+  const old = await db.get('SELECT * FROM exchange_products WHERE id=?', [id]); if (!old) return res.status(404).json({ error: 'Mahsulot topilmadi' });
+  try {
+    let updated = 0;
+    await db.tx(async t => {
+      await t.run('UPDATE exchange_products SET name=? WHERE id=?', [x.name, id]);
+      if (old.name !== x.name) updated = (await t.run('UPDATE lots SET product=? WHERE product=?', [x.name, old.name])).changes;   // shu nomdagi lotlar ham yangilanadi
+    });
+    res.json({ ok: true, updated_lots: updated });
+  } catch (e) { if (e.code === '23505') return res.status(400).json({ error: 'Bu nomdagi mahsulot allaqachon bor' }); throw e; }
+}));
+app.delete('/api/exchange-products/:id', auth, writer, ah(async (req, res) => {
+  await db.run('DELETE FROM exchange_products WHERE id=?', [parseInt(req.params.id, 10) || 0]); res.json({ ok: true });
+}));
+// lotlarda uchraydigan, lekin ro'yxatda yo'q mahsulot nomlarini qo'shish
+app.post('/api/exchange-products/sync', auth, writer, ah(async (req, res) => res.json({ added: (await db.run(EXCH_FROM_LOTS)).changes })));
+
 /* ---------------- Mening lotlarim ---------------- */
 app.use('/api/my-lots', auth, require('./lib/mylots')({ db, ah, writer, P }));
 
@@ -371,11 +400,17 @@ async function seedUnits() {   // birinchi marta: mavjud lotlardagi birliklar no
   const n = (await db.run(UNITS_FROM_LOTS)).changes; if (n) console.log(`O'lchov birliklari lotlardan yuklandi: ${n} ta`);
 }
 
+async function seedExchProducts() {   // birinchi marta: mavjud lotlardagi mahsulot nomlari nomenklaturaga ko'chiriladi
+  if ((await db.get('SELECT COUNT(*) c FROM exchange_products')).c) return;
+  const n = (await db.run(EXCH_FROM_LOTS)).changes; if (n) console.log(`Birja mahsulotlari lotlardan yuklandi: ${n} ta`);
+}
+
 async function main() {
   await init();
   const pw = await ensureAdmin();
   await seedProducts();
   await seedUnits();
+  await seedExchProducts();
   if (pw) console.log(`\n>>> Birinchi ishga tushirish. Login: admin   Parol: ${pw}\n    (kirgandan keyin parolni almashtiring)\n`);
   const port = process.env.PORT || 3000;
   app.listen(port, () => console.log(`Tizim ishga tushdi: http://localhost:${port}`));

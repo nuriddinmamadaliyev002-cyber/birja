@@ -21,7 +21,7 @@ async function api(path, o = {}) {
 }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.remove('hidden'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3500); }
 function modal(html, wide) { $('#modalBox').className = 'modal-box card' + (wide ? ' wide' : ''); $('#modalBox').innerHTML = html; $('#modal').classList.remove('hidden'); }
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() { closeSug(); $('#modal').classList.add('hidden'); }
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
@@ -106,6 +106,57 @@ function openCal(anchor, iso, onPick) {
 document.addEventListener('mousedown', e => { if (calEl && !calEl.contains(e.target) && !e.target.closest('.dt-cal')) closeCal(); });
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && calEl) { closeCal(); e.stopImmediatePropagation(); } }, true);   // Esc avval kalendarni yopadi, oyna ochiq qoladi
 window.addEventListener('scroll', e => { if (calEl && !calEl.contains(e.target)) closeCal(); }, true);
+
+/* ---------- qidiruvli tanlash (autocomplete) ----------
+   suggest(input, () => [nomlar], onPick): yozganda mos nomlar ro'yxati chiqadi, bir marta bosish (yoki ↑ ↓ Enter) bilan tanlanadi.
+   Ro'yxat <body> ga position:fixed qilib qo'yiladi, aks holda modal (overflow:auto) uni kesib qo'yadi. Esc avval ro'yxatni yopadi, oyna ochiq qoladi. */
+let sugEl = null;
+function closeSug() { if (sugEl) { sugEl.remove(); sugEl = null; } }
+function suggest(inp, getItems, onPick) {
+  let idx = -1, items = [];
+  const norm = s => String(s ?? '').toLowerCase();
+  const mark = (name, words) => {            // mos kelgan so'zlarni qalin qiladi
+    const low = norm(name), hit = new Array(name.length).fill(false);
+    words.forEach(w => { for (let i = low.indexOf(w); i >= 0; i = low.indexOf(w, i + w.length)) for (let k = i; k < i + w.length; k++) hit[k] = true; });
+    let o = '', open = false;
+    [...name].forEach((ch, i) => { if (hit[i] !== open) { o += open ? '</b>' : '<b>'; open = hit[i]; } o += esc(ch); });
+    return o + (open ? '</b>' : '');
+  };
+  const place = () => {
+    if (!sugEl) return;
+    const r = inp.getBoundingClientRect(), h = sugEl.offsetHeight;
+    sugEl.style.left = r.left + 'px'; sugEl.style.width = r.width + 'px';
+    const below = innerHeight - r.bottom - 8, top = h > below && r.top > below ? r.top - h - 2 : r.bottom + 2;   // pastga sig'masa tepaga ochiladi
+    sugEl.style.top = Math.max(8, top) + 'px';
+    sugEl.style.maxHeight = Math.max(120, Math.min(260, (top === r.bottom + 2 ? below : r.top - 10))) + 'px';
+  };
+  const pick = i => { if (!items[i]) return; inp.value = items[i]; closeSug(); onPick && onPick(items[i]); };
+  const mark_on = () => { [...sugEl.children].forEach((c, i) => c.classList.toggle('on', i === idx)); const c = sugEl.children[idx]; if (c) c.scrollIntoView({ block: 'nearest' }); };
+  const show = () => {
+    const words = norm(inp.value).split(/\s+/).filter(Boolean);
+    if (!words.length) return closeSug();
+    items = getItems().filter(n => words.every(w => norm(n).includes(w)))
+      .sort((a, b) => (norm(a).startsWith(words[0]) ? 0 : 1) - (norm(b).startsWith(words[0]) ? 0 : 1) || a.localeCompare(b, 'uz')).slice(0, 50);
+    closeSug(); idx = -1;
+    const el = sugEl = document.createElement('div'); el.className = 'sug';
+    el.innerHTML = items.length ? items.map((n, i) => `<div class="sug-i" data-i="${i}">${mark(n, words)}</div>`).join('') : '<div class="sug-0">Ro\'yxatda topilmadi</div>';
+    el.onmousedown = e => { e.preventDefault(); const t = e.target.closest('.sug-i'); if (t) pick(+t.dataset.i); };   // fokus maydonda qoladi, bitta bosish yetarli
+    document.body.appendChild(el); place();
+  };
+  inp.setAttribute('autocomplete', 'off');
+  inp.addEventListener('input', show);
+  inp.addEventListener('focus', () => { if (inp.value.trim()) show(); });
+  inp.addEventListener('blur', closeSug);
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!sugEl) show(); if (!sugEl || !items.length) return;
+      e.preventDefault(); idx = (idx + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; mark_on();
+    } else if (e.key === 'Enter' && sugEl && idx >= 0) { e.preventDefault(); pick(idx); }
+    else if (e.key === 'Escape' && sugEl) { e.stopPropagation(); closeSug(); }
+  });
+}
+window.addEventListener('scroll', e => { if (sugEl && !sugEl.contains(e.target)) closeSug(); }, true);
+window.addEventListener('resize', closeSug);
 
 const nowLocal = () => { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 
@@ -213,12 +264,12 @@ function dateFields() {
 new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); dateFields(); numFields(); }); }).observe(document.body, { childList: true, subtree: true });
 
 /* ---------- holat ---------- */
-let ME = null, FILTERS = null, PRODUCTS = [], UNITS = [];
+let ME = null, FILTERS = null, PRODUCTS = [], UNITS = [], EXCH = [];
 const G = { from: '', to: '' }; // umumiy sana oralig'i
 
 const PAGES = [
   ['dashboard', 'Umumiy ko\'rinish'], ['mylots', 'Mening lotlarim'], ['lots', 'Lotlar bazasi'], ['trend', 'Narx dinamikasi'], ['margin', 'Marja kalkulyatori'],
-  ['rank', 'Raqobat va buyurtmachilar'], ['products', 'Mahsulotlarimiz'], ['units', "O'lchov birliklari"], ['settings', 'Sozlamalar'],
+  ['rank', 'Raqobat va buyurtmachilar'], ['products', 'Mahsulotlarimiz'], ['exchprod', 'Birja mahsulotlari'], ['units', "O'lchov birliklari"], ['settings', 'Sozlamalar'],
 ];
 const canWrite = () => ME && ME.role !== 'viewer';
 
@@ -242,7 +293,7 @@ async function boot() {
   await refreshMeta();
   route();
 }
-async function refreshMeta() { [FILTERS, PRODUCTS, UNITS] = await Promise.all([api('/filters'), api('/products'), api('/units'), refreshCounts()]); }
+async function refreshMeta() { [FILTERS, PRODUCTS, UNITS, EXCH] = await Promise.all([api('/filters'), api('/products'), api('/units'), api('/exchange-products'), refreshCounts()]); }
 async function refreshCounts() {
   try { const c = await api('/my-lots/counts'); document.querySelectorAll('[data-cnt]').forEach(e => { const n = c[e.dataset.cnt]; e.textContent = n > 0 ? n : ''; }); } catch { }
 }
@@ -405,20 +456,24 @@ function addLotDialog(pre = {}) {
   const reg = (k, label) => `<label>${label}<select id="al_${k}"><option value="">—</option>${REGIONS.map(r => `<option ${pre[k] === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>`;
   modal(`<h2>Yangi lot qo'shish</h2><div class="formgrid">
     <label>Sana *<input id="al_date" type="date" value="${esc(pre.date || nowLocal().slice(0, 10))}"></label>${inp('lot_no', 'Lot raqami *')}
-    ${inp('product', 'Mahsulot nomi *', 'list="dlProd" autocomplete="off"')}${inp('brand', 'Brend / Marka', 'list="dlBrand" autocomplete="off"')}
+    ${inp('product', 'Mahsulot nomi *', 'autocomplete="off" placeholder="nomini yozing…"')}${inp('brand', 'Brend / Marka', 'list="dlBrand" autocomplete="off"')}
     <label>O'lchov birligi<select id="al_unit"><option value="">— tanlang —</option>${UNITS.map(u => `<option value="${esc(u.name)}" ${pre.unit === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>${num('volume', 'Hajmi (qop / kg soni)')}
     ${num('start_price', "Boshlang'ich narx (so'm, 1 birlik)")}${num('final_price', "Yakuniy narx (so'm, 1 birlik) *")}${num('bids', 'Takliflar soni')}
     ${inp('customer', 'Buyurtmachi')}${reg('customer_region', 'Buyurtmachi hududi')}${inp('winner', "Yetkazib beruvchi (G'olib)")}${reg('winner_region', "G'olib hududi")}</div>
-    <datalist id="dlProd">${FILTERS.products.map(p => `<option value="${esc(p)}">`).join('')}</datalist><datalist id="dlBrand">${FILTERS.brands.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
+    <datalist id="dlBrand">${FILTERS.brands.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
     <div id="alHint" class="muted small" style="margin-top:10px"></div>
     <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn" type="button" id="alMore">Saqlash va yana qo'shish</button><button class="btn primary" type="button" id="alSave">Saqlash</button></div>`, true);
   const hint = () => {
     const unit = $('#al_unit').value, un = UNITS.find(u => u.name === unit), kg = un ? un.pack_kg : null, fin = parseFloat($('#al_final_price').value);
-    $('#alHint').innerHTML = !UNITS.length ? `<span class="warn">Birliklar ro'yxati bo'sh. Avval <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida birlik qo'shing.</span>`
+    const pv = $('#al_product').value.trim(), pnote = pv && !EXCH.some(e => e.name.toLowerCase() === pv.toLowerCase())
+      ? `<div class="warn" style="margin-bottom:6px">«${esc(pv)}» birja mahsulotlari ro'yxatida yo'q. <a href="#exchprod" onclick="closeModal()">«Birja mahsulotlari»</a> menyusiga qo'shishingiz mumkin.</div>` : '';
+    $('#alHint').innerHTML = pnote + (!UNITS.length ? `<span class="warn">Birliklar ro'yxati bo'sh. Avval <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida birlik qo'shing.</span>`
       : !unit ? `Birlikni ro'yxatdan tanlang. Kerakli birlik yo'q bo'lsa, <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida qo'shing.`
         : kg ? `1 birlik = ${kgf(kg)} kg${fin ? ` → 1 kg narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
-          : '<span class="warn">Bu birlikda kg/litr hajmi ko\'rsatilmagan, shuning uchun 1 kg narxi hisoblanmaydi (narx dinamikasida ko\'rinmaydi). «O\'lchov birliklari» menyusida hajmni kiriting.</span>';
+          : '<span class="warn">Bu birlikda kg/litr hajmi ko\'rsatilmagan, shuning uchun 1 kg narxi hisoblanmaydi (narx dinamikasida ko\'rinmaydi). «O\'lchov birliklari» menyusida hajmni kiriting.</span>');
   };
+  suggest($('#al_product'), () => EXCH.map(e => e.name), hint);
+  $('#al_product').addEventListener('input', hint);
   $('#al_unit').onchange = hint; $('#al_final_price').oninput = hint; hint();
   const keys = ['date', 'lot_no', 'product', 'brand', 'unit', 'volume', 'start_price', 'final_price', 'bids', 'customer', 'customer_region', 'winner', 'winner_region'];
   const save = async more => {
@@ -609,6 +664,51 @@ async function units() {
     if (!confirm(`«${u.name}» ro'yxatdan o'chirilsinmi?\n${u.used ? `Mavjud ${u.used} ta lot o'zgarmaydi.` : ''}`)) return;
     try { await api('/units/' + u.id, { method: 'DELETE' }); units(); } catch (e) { toast(e.message); }
   });
+}
+
+/* ---------- Birja mahsulotlari (nomenklatura) ---------- */
+async function exchprod() {
+  await refreshMeta();
+  const w = canWrite();
+  $('#view').innerHTML = head('Birja mahsulotlari', "Nomenklatura: lotni qo'lda qo'shishda «Mahsulot nomi» maydoniga yozganda shu ro'yxatdan qidirib topiladi",
+    w ? `<button class="btn" id="eSync">Lotlardan yangilash</button> <button class="btn primary" id="eAdd">+ Mahsulot</button>` : '') + `
+    <div class="bar"><label>Qidiruv<input data-clear id="eQ" placeholder="mahsulot nomi" style="width:260px"></label><span class="muted small" id="eCnt"></span></div>
+    <div id="eOut"></div>
+    <p class="muted small">Nomi o'zgartirilsa, shu nomdagi lotlar ham yangilanadi. Mahsulot ro'yxatdan o'chirilsa, mavjud lotlar o'zgarmaydi.</p>`;
+  const form = x => {
+    modal(`<h2>${x ? 'Mahsulotni tahrirlash' : 'Yangi birja mahsuloti'}</h2><div class="formgrid" style="grid-template-columns:1fr">
+      <label>Nomi *<input id="e_name" value="${esc(x ? x.name : '')}" placeholder="Shtukaturka (Gipsli)" autocomplete="off"></label></div>
+      ${x && x.used ? `<p class="muted small">Nomi o'zgarsa, ${nf(x.used)} ta lot ham yangilanadi.</p>` : ''}
+      <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn primary" type="button" id="eSave">Saqlash</button></div>`);
+    $('#e_name').focus();
+    const save = async () => {
+      try {
+        const r = await api(x ? '/exchange-products/' + x.id : '/exchange-products', { method: x ? 'PUT' : 'POST', json: { name: $('#e_name').value } });
+        closeModal(); toast(x ? `Saqlandi${r.updated_lots ? ` · ${nf(r.updated_lots)} ta lot yangilandi` : ''}` : "Mahsulot qo'shildi"); exchprod();
+      } catch (e) { toast(e.message); }
+    };
+    $('#eSave').onclick = save; $('#e_name').onkeydown = e => { if (e.key === 'Enter') save(); };
+  };
+  const draw = () => {
+    const words = $('#eQ').value.toLowerCase().split(/\s+/).filter(Boolean);
+    const rows = EXCH.filter(x => words.every(wd => x.name.toLowerCase().includes(wd)));
+    $('#eCnt').textContent = words.length ? `${nf(rows.length)} / ${nf(EXCH.length)}` : `${nf(EXCH.length)} ta`;
+    $('#eOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>№</th><th>Mahsulot nomi</th><th class="num">Lotlarda</th><th></th></tr></thead><tbody>
+      ${rows.map((x, i) => `<tr><td class="muted c-hide">${i + 1}</td><td class="c-title">${esc(x.name)}</td><td class="num">${nf(x.used)}</td>
+        <td class="nowrap">${w ? `<button class="btn small" data-ee="${x.id}">✎</button> <button class="btn small danger" data-ed="${x.id}">×</button>` : ''}</td></tr>`).join('')
+        || `<tr><td colspan="4" class="muted">${EXCH.length ? 'Hech narsa topilmadi' : 'Hozircha mahsulot yo\'q. "+ Mahsulot" yoki "Lotlardan yangilash" tugmasini bosing.'}</td></tr>`}
+      </tbody></table></div>`;
+    document.querySelectorAll('[data-ee]').forEach(b => b.onclick = () => form(EXCH.find(x => x.id == b.dataset.ee)));
+    document.querySelectorAll('[data-ed]').forEach(b => b.onclick = async () => {
+      const x = EXCH.find(v => v.id == b.dataset.ed);
+      if (!confirm(`«${x.name}» ro'yxatdan o'chirilsinmi?\n${x.used ? `Mavjud ${x.used} ta lot o'zgarmaydi.` : ''}`)) return;
+      try { await api('/exchange-products/' + x.id, { method: 'DELETE' }); exchprod(); } catch (e) { toast(e.message); }
+    });
+  };
+  $('#eQ').oninput = debounce(draw, 150);
+  if ($('#eAdd')) $('#eAdd').onclick = () => form(null);
+  if ($('#eSync')) $('#eSync').onclick = async () => { try { const r = await api('/exchange-products/sync', { method: 'POST' }); toast(r.added ? `${r.added} ta yangi mahsulot qo'shildi` : "Yangi mahsulot topilmadi (hammasi ro'yxatda)"); exchprod(); } catch (e) { toast(e.message); } };
+  draw();
 }
 
 /* ---------- Mahsulotlar ---------- */
@@ -856,5 +956,5 @@ async function settings() {
   document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => { if (confirm('Foydalanuvchi o\'chirilsinmi?')) { await api('/users/' + b.dataset.u, { method: 'DELETE' }); settings(); } });
 }
 
-const VIEWS = { dashboard, mylots, lots, trend, margin, rank, products, units, settings };
+const VIEWS = { dashboard, mylots, lots, trend, margin, rank, products, exchprod, units, settings };
 boot();

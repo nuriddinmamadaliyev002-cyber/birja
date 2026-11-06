@@ -22,6 +22,12 @@ Menyu: O'lchov birliklari. "Lotlar bazasi" → "+ Yangi lot" dagi «O'lchov birl
 - Birlik nomi yoki hajmi o'zgartirilsa, shu birlikdagi lotlar ham yangilanadi (1 kg narxi qayta hisoblanadi). Birlik o'chirilsa, lotlar o'zgarmaydi.
 - Excel importda ham ro'yxatdagi hajm ishlatiladi (nomdan taxmin qilishdan ustun).
 
+## Birja mahsulotlari (nomenklatura)
+Menyu: Birja mahsulotlari. "Lotlar bazasi" → "+ Yangi lot" dagi «Mahsulot nomi» maydoniga yozganda shu ro'yxatdan qidirib topiladi (katta-kichik harf farqsiz, bir nechta so'z bo'yicha); nom ustiga bir marta bosilsa (yoki ↑ ↓ + Enter) tanlanadi.
+- Birinchi ishga tushishda ro'yxat mavjud lotlardagi mahsulot nomlaridan to'ldiriladi; keyinchalik "Lotlardan yangilash" tugmasi yangi nomlarni qo'shadi.
+- Nomi o'zgartirilsa, shu nomdagi lotlar ham yangilanadi. Mahsulot o'chirilsa, lotlar o'zgarmaydi.
+- Ro'yxatda yo'q nom yozilsa ham lotni saqlash mumkin, lekin oynada eslatma chiqadi.
+
 ## Mening lotlarim (o'zimiz ishtirok etgan lotlar)
 Menyu: Mening lotlarim → Yangi / G'olib bo'lingan / Yutqazilgan / Rad etilgan.
 - Lotni qo'lda ("+ Yangi lot") yoki xarid.uzex.uz dagi "mening lotlarim" jadvalini Excel/CSV qilib import qilish mumkin (status matnidan holat avtomatik aniqlanadi; shablon shu yerda).
