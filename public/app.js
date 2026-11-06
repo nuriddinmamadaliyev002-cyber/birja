@@ -333,7 +333,7 @@ const LS = { page: 1, sort: 'date', dir: 'desc', f: {} };
 async function lots() {
   const f = FILTERS;
   $('#view').innerHTML = head('Lotlar bazasi', `${nf(f.range.n)} ta lot${f.range.min ? ` · ${f.range.min} — ${f.range.max}` : ''}`,
-    canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn primary" id="imp">Excel/CSV import</button>` : '') + demoBanner() + `
+    (canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn primary" id="imp">Excel/CSV import</button>` : '') + (ME.role === 'admin' ? ` <button class="btn danger" id="delAll">Hammasini o'chirish</button>` : '')) + demoBanner() + `
   <div class="bar">
     <label>Qidiruv<input data-clear id="fq" placeholder="mahsulot, brend, kompaniya, lot №" value="${esc(LS.f.q || '')}" style="width:240px"></label>
     <label>Mahsulot<select id="fproduct">${opts(f.products, LS.f.product, 'Barchasi')}</select></label>
@@ -351,10 +351,13 @@ async function lots() {
   $('#fq').oninput = debounce(read);
   $('#freset').onclick = () => { LS.f = {}; LS.page = 1; lots(); };
   if ($('#imp')) $('#imp').onclick = importDialog;
+  let lotsTotal = 0;
+  if ($('#delAll')) $('#delAll').onclick = () => deleteAllDialog(lotsTotal, LS.f, async () => { LS.page = 1; await refreshMeta(); lots(); });
   $('#mSort').onchange = e => { LS.sort = e.target.value; LS.page = 1; load(); };
   $('#mDir').onclick = () => { LS.dir = LS.dir === 'asc' ? 'desc' : 'asc'; LS.page = 1; load(); };
   async function load() {
     const d = await api('/lots?' + qs({ ...LS.f, page: LS.page, sort: LS.sort, dir: LS.dir, limit: 50 }));
+    lotsTotal = d.total; if ($('#delAll')) $('#delAll').disabled = !d.total;
     $('#mSort').value = LS.sort; $('#mDir').textContent = LS.dir === 'asc' ? '▲ o\'sish' : '▼ kamayish';
     const th = (k, t, cls = '') => `<th class="s ${cls}" data-s="${k}">${t}${LS.sort === k ? (LS.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
     const pages = Math.max(1, Math.ceil(d.total / d.limit));
@@ -372,6 +375,25 @@ async function lots() {
     document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (!confirm('Lot o\'chirilsinmi?')) return; await api('/lots/' + b.dataset.del, { method: 'DELETE' }); await refreshMeta(); load(); });
   }
   await load();
+}
+/* Lotlarni ommaviy o'chirish: joriy filtrga mos hammasi (filtr bo'lmasa, butun baza). Tasdiqlash belgisisiz tugma ishlamaydi. */
+function deleteAllDialog(total, f, onDone) {
+  const labels = { q: 'qidiruv', product: 'mahsulot', brand: 'brend', winner_region: "g'olib hududi", customer_region: 'buyurtmachi hududi', from: 'dan', to: 'gacha' };
+  const act = Object.entries(f || {}).filter(([, v]) => v);
+  const scope = act.length ? `Joriy filtrga mos <b>${nf(total)}</b> ta lot o'chiriladi:<div class="muted small" style="margin-top:4px">${act.map(([k, v]) => `${labels[k] || k}: ${esc(v)}`).join(' · ')}</div>`
+    : `<b>Butun bazadagi ${nf(total)} ta lot</b> o'chiriladi (filtr tanlanmagan).`;
+  modal(`<h2>Lotlarni o'chirish</h2><div class="bignote bad">${scope}</div>
+    <p class="muted">Bu amalni qaytarib bo'lmaydi. "Mening lotlarim" va mahsulotlarga tegilmaydi.</p>
+    <label class="xc"><input type="checkbox" id="daOk"><span>Tushundim, lotlar butunlay o'chiriladi</span></label>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn danger" type="button" id="daGo" disabled>${nf(total)} ta lotni o'chirish</button></div>`);
+  $('#daOk').onchange = () => { $('#daGo').disabled = !$('#daOk').checked; };
+  $('#daGo').onclick = async () => {
+    $('#daGo').disabled = true;
+    try {
+      const r = await api('/lots?' + qs(f || {}), { method: 'DELETE' });
+      closeModal(); toast(`${nf(r.deleted)} ta lot o'chirildi`); onDone && onDone();
+    } catch (e) { toast(e.message); $('#daGo').disabled = false; }
+  };
 }
 function importDialog() {
   modal(`<h2>Lotlarni import qilish</h2>

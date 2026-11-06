@@ -151,6 +151,12 @@ app.get('/api/lots', auth, ah(async (req, res) => {
     [...args, limit, (page - 1) * limit]);
   res.json({ total, page, limit, rows });
 }));
+// Ommaviy o'chirish: joriy filtrga mos hamma lot (filtr bo'sh bo'lsa, butun baza). Faqat admin.
+app.delete('/api/lots', auth, need('admin'), ah(async (req, res) => {
+  const { where, args } = lotFilter(req.query);
+  const r = await db.run(`DELETE FROM lots ${where}`, args);
+  res.json({ deleted: r.changes });
+}));
 app.delete('/api/lots/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM lots WHERE id=?', [req.params.id]); res.json({ ok: true }); }));
 
 const UPSERT = `INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
