@@ -420,12 +420,14 @@ async function lots() {
       <td class="num nowrap"><span class="muted">${nf(r.start_price)}</span> → <b>${nf(r.final_price)}</b></td><td class="num">${nf(r.price_per_kg)}</td>
       <td class="num ${r.discount_pct > 20 ? 'warn' : ''}">${pct(r.discount_pct)}</td><td class="num">${r.bids ?? '—'}</td>
       <td>${esc(r.winner)}<div class="muted small">${esc(r.winner_region)}</div></td><td>${esc(r.customer)}<div class="muted small">${esc(r.customer_region)}</div></td>
-      <td class="small muted">${esc(r.lot_no)}</td>${canWrite() ? `<td><button class="btn small danger" data-del="${r.id}">×</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="13" class="muted">Hech narsa topilmadi</td></tr>`}
+      <td class="small muted">${esc(r.lot_no)}</td>${canWrite() ? `<td class="nowrap"><button class="btn small" data-elot="${r.id}" title="Tahrirlash" aria-label="Tahrirlash">✎</button> <button class="btn small danger" data-del="${r.id}" title="O'chirish" aria-label="O'chirish">×</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="13" class="muted">Hech narsa topilmadi</td></tr>`}
       </tbody></table></div>
       <div class="pager"><span class="muted">${nf(d.total)} ta natija</span><button class="btn small" id="pp" ${LS.page <= 1 ? 'disabled' : ''}>←</button><span>${LS.page} / ${pages}</span><button class="btn small" id="pn" ${LS.page >= pages ? 'disabled' : ''}>→</button></div>`;
     document.querySelectorAll('th.s').forEach(t => t.onclick = () => { const k = t.dataset.s; LS.dir = LS.sort === k && LS.dir === 'desc' ? 'asc' : 'desc'; LS.sort = k; load(); });
     $('#pp').onclick = () => { LS.page--; load(); }; $('#pn').onclick = () => { LS.page++; load(); };
     document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (!confirm('Lot o\'chirilsinmi?')) return; await api('/lots/' + b.dataset.del, { method: 'DELETE' }); LS.sel.delete(+b.dataset.del); await refreshMeta(); load(); });
+    const byId = new Map(d.rows.map(r => [r.id, r]));   // ✎: shu sahifadagi qator ma'lumoti bilan oyna ochiladi
+    document.querySelectorAll('[data-elot]').forEach(b => b.onclick = () => addLotDialog(byId.get(+b.dataset.elot), +b.dataset.elot));
     if (w) {   // qatorlarni belgilash va tanlanganlarni birga o'chirish
       const syncBar = () => { $('#selN').textContent = LS.sel.size; document.querySelector('.selinfo').classList.toggle('hidden', !LS.sel.size); $('#selPage').checked = !!ids.length && ids.every(i => LS.sel.has(i)); };
       document.querySelectorAll('[data-sel]').forEach(c => c.onchange = () => { const id = +c.dataset.sel; c.checked ? LS.sel.add(id) : LS.sel.delete(id); c.closest('tr').classList.toggle('sel', c.checked); syncBar(); });
@@ -450,24 +452,26 @@ const packKgJs = u => {   // lib/parse.js dagi packKg bilan bir xil qoida (faqat
   m = s.match(/(\d+(?:\.\d+)?)\s*(l|litr|л)\b/); if (m) return +m[1];
   if (/^\s*(kg|кг|килограмм)\s*$/.test(s)) return 1; if (/tonna|тонна/.test(s)) return 1000; return null;
 };
-function addLotDialog(pre = {}) {
+function addLotDialog(pre = {}, editId = null) {   // editId bo'lsa: shu lotni tahrirlash (PUT), aks holda yangi lot (POST)
   const inp = (k, label, extra = '') => `<label>${label}<input id="al_${k}" value="${esc(pre[k] ?? '')}" ${extra}></label>`;
   const num = (k, label) => inp(k, label, 'type="number" step="any"');
-  const reg = (k, label) => `<label>${label}<select id="al_${k}"><option value="">—</option>${REGIONS.map(r => `<option ${pre[k] === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>`;
-  modal(`<h2>Yangi lot qo'shish</h2><div class="formgrid">
+  const reg = (k, label) => `<label>${label}<select id="al_${k}"><option value="">—</option>${(pre[k] && !REGIONS.includes(pre[k]) ? [...REGIONS, pre[k]] : REGIONS).map(r => `<option ${pre[k] === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>`;
+  // importdan kelgan lotning birligi nomenklaturada bo'lmasligi mumkin: tahrirlashda u yo'qolib qolmasligi uchun ro'yxatga qo'shiladi
+  const unitList = pre.unit && !UNITS.some(u => u.name === pre.unit) ? [...UNITS, { name: pre.unit, pack_kg: packKgJs(pre.unit) }] : UNITS;
+  modal(`<h2>${editId ? 'Lotni tahrirlash' : "Yangi lot qo'shish"}</h2><div class="formgrid">
     <label>Sana *<input id="al_date" type="date" value="${esc(pre.date || nowLocal().slice(0, 10))}"></label>${inp('lot_no', 'Lot raqami *')}
     ${inp('product', 'Mahsulot nomi *', 'autocomplete="off" placeholder="nomini yozing…"')}${inp('brand', 'Brend / Marka', 'list="dlBrand" autocomplete="off"')}
-    <label>O'lchov birligi<select id="al_unit"><option value="">— tanlang —</option>${UNITS.map(u => `<option value="${esc(u.name)}" ${pre.unit === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>${num('volume', 'Hajmi (qop / kg soni)')}
+    <label>O'lchov birligi<select id="al_unit"><option value="">— tanlang —</option>${unitList.map(u => `<option value="${esc(u.name)}" ${pre.unit === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>${num('volume', 'Hajmi (qop / kg soni)')}
     ${num('start_price', "Boshlang'ich narx (so'm, 1 birlik)")}${num('final_price', "Yakuniy narx (so'm, 1 birlik) *")}${num('bids', 'Takliflar soni')}
     ${inp('customer', 'Buyurtmachi')}${reg('customer_region', 'Buyurtmachi hududi')}${inp('winner', "Yetkazib beruvchi (G'olib)")}${reg('winner_region', "G'olib hududi")}</div>
     <datalist id="dlBrand">${FILTERS.brands.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
     <div id="alHint" class="muted small" style="margin-top:10px"></div>
-    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn" type="button" id="alMore">Saqlash va yana qo'shish</button><button class="btn primary" type="button" id="alSave">Saqlash</button></div>`, true);
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button>${editId ? '' : '<button class="btn" type="button" id="alMore">Saqlash va yana qo\'shish</button>'}<button class="btn primary" type="button" id="alSave">Saqlash</button></div>`, true);
   const hint = () => {
-    const unit = $('#al_unit').value, un = UNITS.find(u => u.name === unit), kg = un ? un.pack_kg : null, fin = parseFloat($('#al_final_price').value);
+    const unit = $('#al_unit').value, un = unitList.find(u => u.name === unit), kg = un ? un.pack_kg : null, fin = parseFloat($('#al_final_price').value);
     const pv = $('#al_product').value.trim(), pnote = pv && !EXCH.some(e => e.name.toLowerCase() === pv.toLowerCase())
       ? `<div class="warn" style="margin-bottom:6px">«${esc(pv)}» birja mahsulotlari ro'yxatida yo'q. <a href="#exchprod" onclick="closeModal()">«Birja mahsulotlari»</a> menyusiga qo'shishingiz mumkin.</div>` : '';
-    $('#alHint').innerHTML = pnote + (!UNITS.length ? `<span class="warn">Birliklar ro'yxati bo'sh. Avval <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida birlik qo'shing.</span>`
+    $('#alHint').innerHTML = pnote + (!unitList.length ? `<span class="warn">Birliklar ro'yxati bo'sh. Avval <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida birlik qo'shing.</span>`
       : !unit ? `Birlikni ro'yxatdan tanlang. Kerakli birlik yo'q bo'lsa, <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida qo'shing.`
         : kg ? `1 birlik = ${kgf(kg)} kg${fin ? ` → 1 kg narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
           : '<span class="warn">Bu birlikda kg/litr hajmi ko\'rsatilmagan, shuning uchun 1 kg narxi hisoblanmaydi (narx dinamikasida ko\'rinmaydi). «O\'lchov birliklari» menyusida hajmni kiriting.</span>');
@@ -482,15 +486,16 @@ function addLotDialog(pre = {}) {
     if (!b.date) return toast('Sanani kiriting');
     if (!b.lot_no.trim() || !b.product.trim()) return toast('Lot raqami va mahsulot nomini kiriting');
     if (b.final_price === '') return toast('Yakuniy narxni kiriting');
-    $('#alSave').disabled = $('#alMore').disabled = true;
+    busy(true);
     try {
-      await api('/lots', { method: 'POST', json: b }); await refreshMeta(); toast(`Lot ${b.lot_no} qo'shildi`);
+      await api(editId ? '/lots/' + editId : '/lots', { method: editId ? 'PUT' : 'POST', json: b }); await refreshMeta(); toast(editId ? `Lot ${b.lot_no} saqlandi` : `Lot ${b.lot_no} qo'shildi`);
       if (location.hash === '#lots') lots();
-      if (more) addLotDialog({ date: b.date, product: b.product, brand: b.brand, unit: b.unit, volume: b.volume, customer: b.customer, customer_region: b.customer_region });
+      if (more && !editId) addLotDialog({ date: b.date, product: b.product, brand: b.brand, unit: b.unit, volume: b.volume, customer: b.customer, customer_region: b.customer_region });
       else closeModal();
-    } catch (e) { toast(e.message); $('#alSave').disabled = $('#alMore').disabled = false; }
+    } catch (e) { toast(e.message); busy(false); }
   };
-  $('#alSave').onclick = () => save(false); $('#alMore').onclick = () => save(true);
+  const busy = on => { $('#alSave').disabled = on; if ($('#alMore')) $('#alMore').disabled = on; };
+  $('#alSave').onclick = () => save(false); if ($('#alMore')) $('#alMore').onclick = () => save(true);
 }
 function importDialog() {
   modal(`<h2>Lotlarni import qilish</h2>

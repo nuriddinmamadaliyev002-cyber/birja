@@ -13,6 +13,7 @@ Ixtiyoriy: `npm run demo` — 700 ta DEMO lot (admin paneldan o'chiriladi).
 
 ## Ma'lumot kiritish
 "Lotlar bazasi" → "Excel/CSV import" (shablon shu yerda). Lot raqami bo'yicha dublikat bo'lmaydi.
+Qatorni tahrirlash: "Lotlar bazasi" jadvalida qator oxiridagi ✎ tugmasi (admin va analyst). Tahrirlangan demo lot haqiqiy hisoblanadi ("Demoni o'chirish" uni o'chirmaydi). Lot raqami boshqa lotnikiga o'zgartirilsa, saqlanmaydi.
 Qadoq hajmi o'lchov birligidan olinadi ("Qop (30 kg)" → 30), 1 kg narx = yakuniy narx / kg.
 
 ## O'lchov birliklari (nomenklatura)

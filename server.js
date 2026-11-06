@@ -162,30 +162,41 @@ app.post('/api/lots/delete', auth, writer, ah(async (req, res) => {
   res.json({ deleted: r.changes });
 }));
 
-// Lotni qo'lda qo'shish (Excel importdagi ustunlar bilan bir xil; lot raqami takrorlansa rad etiladi)
-app.post('/api/lots', auth, writer, ah(async (req, res) => {
-  const b = req.body || {};
+// Lotni qo'lda qo'shish / tahrirlash (Excel importdagi ustunlar bilan bir xil; lot raqami takrorlansa rad etiladi).
+// Tekshiruv va 1 kg narxini hisoblash POST va PUT uchun umumiy: { error } yoki { v: [lot_no, date, ..., price_per_kg] } qaytaradi
+const LOT_COLS = 'lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg';
+async function lotBody(b) {
   const t = v => { const s = v == null ? '' : String(v).replace(/\s+/g, ' ').trim(); return s || null; };
   const n = v => { const s = t(v); if (s === null) return null; const x = Number(s.replace(/\s/g, '').replace(',', '.')); return Number.isFinite(x) ? x : NaN; };
   const lot_no = t(b.lot_no), product = t(b.product), date = t(b.date), unit = t(b.unit);
   const final_price = n(b.final_price), start_price = n(b.start_price), volume = n(b.volume), bids = n(b.bids);
-  if (!lot_no || !product) return res.status(400).json({ error: 'Lot raqami va mahsulot nomi kerak' });
+  if (!lot_no || !product) return { error: 'Lot raqami va mahsulot nomi kerak' };
   const dm = date && date.match(/^(\d{4})-(\d{2})-(\d{2})$/), dd = dm && new Date(Date.UTC(+dm[1], +dm[2] - 1, +dm[3]));
-  if (!dm || dd.getUTCFullYear() !== +dm[1] || dd.getUTCMonth() !== +dm[2] - 1 || dd.getUTCDate() !== +dm[3]) return res.status(400).json({ error: 'Sana noto\'g\'ri' });
-  if (final_price === null || Number.isNaN(final_price) || final_price < 0) return res.status(400).json({ error: 'Yakuniy narxni to\'g\'ri kiriting' });
-  if ([start_price, volume, bids].some(x => Number.isNaN(x) || (x !== null && x < 0))) return res.status(400).json({ error: 'Narx, hajm yoki takliflar sonida xato' });
+  if (!dm || dd.getUTCFullYear() !== +dm[1] || dd.getUTCMonth() !== +dm[2] - 1 || dd.getUTCDate() !== +dm[3]) return { error: 'Sana noto\'g\'ri' };
+  if (final_price === null || Number.isNaN(final_price) || final_price < 0) return { error: 'Yakuniy narxni to\'g\'ri kiriting' };
+  if ([start_price, volume, bids].some(x => Number.isNaN(x) || (x !== null && x < 0))) return { error: 'Narx, hajm yoki takliflar sonida xato' };
   const un = unit ? await db.get('SELECT pack_kg FROM units WHERE lower(name)=lower(?)', [unit]) : null;
   const pack_kg = un && un.pack_kg != null ? un.pack_kg : P.packKg(unit);
+  return { v: [lot_no, date, product, t(b.brand), unit, pack_kg, volume, start_price, final_price, bids === null ? null : Math.round(bids),
+    t(b.customer), t(b.customer_region), t(b.winner), t(b.winner_region), pack_kg ? final_price / pack_kg : null] };
+}
+const dupLot = (e, res) => { if (e.code === '23505') { res.status(400).json({ error: 'Bu lot raqami bazada allaqachon bor' }); return true; } return false; };
+app.post('/api/lots', auth, writer, ah(async (req, res) => {
+  const x = await lotBody(req.body || {}); if (x.error) return res.status(400).json({ error: x.error });
   try {
-    const row = await db.get(`INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0) RETURNING id`,
-      [lot_no, date, product, t(b.brand), unit, pack_kg, volume, start_price, final_price, bids === null ? null : Math.round(bids),
-        t(b.customer), t(b.customer_region), t(b.winner), t(b.winner_region), pack_kg ? final_price / pack_kg : null]);
+    const row = await db.get(`INSERT INTO lots (${LOT_COLS},is_demo) VALUES (${x.v.map(() => '?').join(',')},0) RETURNING id`, x.v);
     res.json({ id: row.id });
-  } catch (e) {
-    if (e.code === '23505') return res.status(400).json({ error: 'Bu lot raqami bazada allaqachon bor' });
-    throw e;
-  }
+  } catch (e) { if (!dupLot(e, res)) throw e; }
+}));
+// Tahrirlash: tahrirlangan lot haqiqiy ma'lumot hisoblanadi (is_demo=0), aks holda "Demoni o'chirish" uni ham o'chirib yuborardi
+app.put('/api/lots/:id', auth, writer, ah(async (req, res) => {
+  const id = parseInt(req.params.id, 10) || 0;
+  if (!(await db.get('SELECT id FROM lots WHERE id=?', [id]))) return res.status(404).json({ error: 'Lot topilmadi' });
+  const x = await lotBody(req.body || {}); if (x.error) return res.status(400).json({ error: x.error });
+  try {
+    await db.run(`UPDATE lots SET ${LOT_COLS.split(',').map(c => c + '=?').join(',')}, is_demo=0 WHERE id=?`, [...x.v, id]);
+    res.json({ ok: true });
+  } catch (e) { if (!dupLot(e, res)) throw e; }
 }));
 
 const UPSERT = `INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
