@@ -151,13 +151,41 @@ app.get('/api/lots', auth, ah(async (req, res) => {
     [...args, limit, (page - 1) * limit]);
   res.json({ total, page, limit, rows });
 }));
-// Ommaviy o'chirish: joriy filtrga mos hamma lot (filtr bo'sh bo'lsa, butun baza). Faqat admin.
-app.delete('/api/lots', auth, need('admin'), ah(async (req, res) => {
-  const { where, args } = lotFilter(req.query);
-  const r = await db.run(`DELETE FROM lots ${where}`, args);
+app.delete('/api/lots/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM lots WHERE id=?', [req.params.id]); res.json({ ok: true }); }));
+
+// Tanlangan lotlarni birga o'chirish
+app.post('/api/lots/delete', auth, writer, ah(async (req, res) => {
+  const ids = [...new Set((Array.isArray((req.body || {}).ids) ? req.body.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0))];
+  if (!ids.length) return res.status(400).json({ error: 'Lot tanlanmagan' });
+  if (ids.length > 5000) return res.status(400).json({ error: 'Bir yo\'la 5000 tadan ko\'p lot o\'chirib bo\'lmaydi' });
+  const r = await db.run('DELETE FROM lots WHERE id = ANY(?::int[])', [ids]);
   res.json({ deleted: r.changes });
 }));
-app.delete('/api/lots/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM lots WHERE id=?', [req.params.id]); res.json({ ok: true }); }));
+
+// Lotni qo'lda qo'shish (Excel importdagi ustunlar bilan bir xil; lot raqami takrorlansa rad etiladi)
+app.post('/api/lots', auth, writer, ah(async (req, res) => {
+  const b = req.body || {};
+  const t = v => { const s = v == null ? '' : String(v).replace(/\s+/g, ' ').trim(); return s || null; };
+  const n = v => { const s = t(v); if (s === null) return null; const x = Number(s.replace(/\s/g, '').replace(',', '.')); return Number.isFinite(x) ? x : NaN; };
+  const lot_no = t(b.lot_no), product = t(b.product), date = t(b.date), unit = t(b.unit);
+  const final_price = n(b.final_price), start_price = n(b.start_price), volume = n(b.volume), bids = n(b.bids);
+  if (!lot_no || !product) return res.status(400).json({ error: 'Lot raqami va mahsulot nomi kerak' });
+  const dm = date && date.match(/^(\d{4})-(\d{2})-(\d{2})$/), dd = dm && new Date(Date.UTC(+dm[1], +dm[2] - 1, +dm[3]));
+  if (!dm || dd.getUTCFullYear() !== +dm[1] || dd.getUTCMonth() !== +dm[2] - 1 || dd.getUTCDate() !== +dm[3]) return res.status(400).json({ error: 'Sana noto\'g\'ri' });
+  if (final_price === null || Number.isNaN(final_price) || final_price < 0) return res.status(400).json({ error: 'Yakuniy narxni to\'g\'ri kiriting' });
+  if ([start_price, volume, bids].some(x => Number.isNaN(x) || (x !== null && x < 0))) return res.status(400).json({ error: 'Narx, hajm yoki takliflar sonida xato' });
+  const pack_kg = P.packKg(unit);
+  try {
+    const row = await db.get(`INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0) RETURNING id`,
+      [lot_no, date, product, t(b.brand), unit, pack_kg, volume, start_price, final_price, bids === null ? null : Math.round(bids),
+        t(b.customer), t(b.customer_region), t(b.winner), t(b.winner_region), pack_kg ? final_price / pack_kg : null]);
+    res.json({ id: row.id });
+  } catch (e) {
+    if (e.code === '23505') return res.status(400).json({ error: 'Bu lot raqami bazada allaqachon bor' });
+    throw e;
+  }
+}));
 
 const UPSERT = `INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)

@@ -329,11 +329,11 @@ async function dashboard() {
 }
 
 /* ---------- Lotlar ---------- */
-const LS = { page: 1, sort: 'date', dir: 'desc', f: {} };
+const LS = { page: 1, sort: 'date', dir: 'desc', f: {}, sel: new Set() };   // sel: belgilangan lot id lari (sahifalar bo'ylab saqlanadi)
 async function lots() {
   const f = FILTERS;
   $('#view').innerHTML = head('Lotlar bazasi', `${nf(f.range.n)} ta lot${f.range.min ? ` · ${f.range.min} — ${f.range.max}` : ''}`,
-    (canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn primary" id="imp">Excel/CSV import</button>` : '') + (ME.role === 'admin' ? ` <button class="btn danger" id="delAll">Hammasini o'chirish</button>` : '')) + demoBanner() + `
+    canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn" id="imp">Excel/CSV import</button> <button class="btn primary" id="addLot">+ Yangi lot</button>` : '') + demoBanner() + `
   <div class="bar">
     <label>Qidiruv<input data-clear id="fq" placeholder="mahsulot, brend, kompaniya, lot №" value="${esc(LS.f.q || '')}" style="width:240px"></label>
     <label>Mahsulot<select id="fproduct">${opts(f.products, LS.f.product, 'Barchasi')}</select></label>
@@ -346,54 +346,94 @@ async function lots() {
   <div class="bar only-m"><label>Saralash<select id="mSort">${[['date', 'Sana'], ['product', 'Mahsulot'], ['final_price', 'Yakuniy narx'], ['price_per_kg', '1 kg narxi'], ['discount', 'Narx tushishi'], ['bids', 'Takliflar']].map(([k, t]) => `<option value="${k}" ${LS.sort === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <button class="btn" id="mDir" style="flex:none"></button></div><div id="lotsOut"></div>`;
   bindDemo();
-  const read = () => { LS.f = { q: $('#fq').value, product: $('#fproduct').value, brand: $('#fbrand').value, winner_region: $('#fwinner_region').value, customer_region: $('#fcustomer_region').value, from: $('#ffrom').value, to: $('#fto').value }; LS.page = 1; load(); };
+  const read = () => { LS.f = { q: $('#fq').value, product: $('#fproduct').value, brand: $('#fbrand').value, winner_region: $('#fwinner_region').value, customer_region: $('#fcustomer_region').value, from: $('#ffrom').value, to: $('#fto').value }; LS.page = 1; LS.sel.clear(); load(); };   // filtr o'zgarsa tanlov bekor bo'ladi (ko'rinmagan lotlar o'chib ketmasin)
   ['fproduct', 'fbrand', 'fwinner_region', 'fcustomer_region', 'ffrom', 'fto'].forEach(i => $('#' + i).onchange = read);
   $('#fq').oninput = debounce(read);
-  $('#freset').onclick = () => { LS.f = {}; LS.page = 1; lots(); };
+  $('#freset').onclick = () => { LS.f = {}; LS.page = 1; LS.sel.clear(); lots(); };
   if ($('#imp')) $('#imp').onclick = importDialog;
-  let lotsTotal = 0;
-  if ($('#delAll')) $('#delAll').onclick = () => deleteAllDialog(lotsTotal, LS.f, async () => { LS.page = 1; await refreshMeta(); lots(); });
+  if ($('#addLot')) $('#addLot').onclick = () => addLotDialog();
   $('#mSort').onchange = e => { LS.sort = e.target.value; LS.page = 1; load(); };
   $('#mDir').onclick = () => { LS.dir = LS.dir === 'asc' ? 'desc' : 'asc'; LS.page = 1; load(); };
   async function load() {
     const d = await api('/lots?' + qs({ ...LS.f, page: LS.page, sort: LS.sort, dir: LS.dir, limit: 50 }));
-    lotsTotal = d.total; if ($('#delAll')) $('#delAll').disabled = !d.total;
+    if (!d.rows.length && LS.page > 1) { LS.page = Math.max(1, Math.ceil(d.total / d.limit)); return load(); }   // oxirgi sahifadagi hamma lot o'chirilgan bo'lsa
+    const w = canWrite(), ids = d.rows.map(r => r.id);
     $('#mSort').value = LS.sort; $('#mDir').textContent = LS.dir === 'asc' ? '▲ o\'sish' : '▼ kamayish';
     const th = (k, t, cls = '') => `<th class="s ${cls}" data-s="${k}">${t}${LS.sort === k ? (LS.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
     const pages = Math.max(1, Math.ceil(d.total / d.limit));
-    $('#lotsOut').innerHTML = `<div class="tablewrap"><table><thead><tr>${th('date', 'Sana')}${th('product', 'Mahsulot')}<th>Brend</th><th>Birlik</th>
+    const selBar = w ? `<div class="selbar"><label class="xc"><input type="checkbox" id="selPage" ${ids.length && ids.every(i => LS.sel.has(i)) ? 'checked' : ''} ${ids.length ? '' : 'disabled'}><span>Sahifadagilarni tanlash</span></label>
+      <span class="selinfo ${LS.sel.size ? '' : 'hidden'}"><span><b id="selN">${LS.sel.size}</b> ta tanlandi</span><button class="btn small danger" type="button" id="selDel">Tanlanganlarni o'chirish</button><button class="btn small" type="button" id="selClear">Bekor qilish</button></span></div>` : '';
+    $('#lotsOut').innerHTML = selBar + `<div class="tablewrap"><table><thead><tr>${w ? '<th class="c-sel"></th>' : ''}${th('date', 'Sana')}${th('product', 'Mahsulot')}<th>Brend</th><th>Birlik</th>
       ${th('final_price', 'Boshl. → Yakuniy', 'num')}${th('price_per_kg', '1 kg narxi', 'num')}${th('discount', 'Tushish', 'num')}${th('bids', 'Takl.', 'num')}<th>G'olib</th><th>Buyurtmachi</th><th>Lot №</th>${canWrite() ? '<th></th>' : ''}</tr></thead><tbody>
-      ${d.rows.map(r => `<tr><td class="nowrap">${r.date}${r.is_demo ? ' <span class="pill demo">demo</span>' : ''}</td><td class="c-title">${esc(r.product)}</td><td>${esc(r.brand)}</td><td class="nowrap">${esc(r.unit)}</td>
+      ${d.rows.map(r => `<tr class="${LS.sel.has(r.id) ? 'sel' : ''}">${w ? `<td class="c-sel"><input type="checkbox" data-sel="${r.id}" aria-label="Tanlash" ${LS.sel.has(r.id) ? 'checked' : ''}></td>` : ''}<td class="nowrap">${r.date}${r.is_demo ? ' <span class="pill demo">demo</span>' : ''}</td><td class="c-title">${esc(r.product)}</td><td>${esc(r.brand)}</td><td class="nowrap">${esc(r.unit)}</td>
       <td class="num nowrap"><span class="muted">${nf(r.start_price)}</span> → <b>${nf(r.final_price)}</b></td><td class="num">${nf(r.price_per_kg)}</td>
       <td class="num ${r.discount_pct > 20 ? 'warn' : ''}">${pct(r.discount_pct)}</td><td class="num">${r.bids ?? '—'}</td>
       <td>${esc(r.winner)}<div class="muted small">${esc(r.winner_region)}</div></td><td>${esc(r.customer)}<div class="muted small">${esc(r.customer_region)}</div></td>
-      <td class="small muted">${esc(r.lot_no)}</td>${canWrite() ? `<td><button class="btn small danger" data-del="${r.id}">×</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="12" class="muted">Hech narsa topilmadi</td></tr>`}
+      <td class="small muted">${esc(r.lot_no)}</td>${canWrite() ? `<td><button class="btn small danger" data-del="${r.id}">×</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="13" class="muted">Hech narsa topilmadi</td></tr>`}
       </tbody></table></div>
       <div class="pager"><span class="muted">${nf(d.total)} ta natija</span><button class="btn small" id="pp" ${LS.page <= 1 ? 'disabled' : ''}>←</button><span>${LS.page} / ${pages}</span><button class="btn small" id="pn" ${LS.page >= pages ? 'disabled' : ''}>→</button></div>`;
     document.querySelectorAll('th.s').forEach(t => t.onclick = () => { const k = t.dataset.s; LS.dir = LS.sort === k && LS.dir === 'desc' ? 'asc' : 'desc'; LS.sort = k; load(); });
     $('#pp').onclick = () => { LS.page--; load(); }; $('#pn').onclick = () => { LS.page++; load(); };
-    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (!confirm('Lot o\'chirilsinmi?')) return; await api('/lots/' + b.dataset.del, { method: 'DELETE' }); await refreshMeta(); load(); });
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => { if (!confirm('Lot o\'chirilsinmi?')) return; await api('/lots/' + b.dataset.del, { method: 'DELETE' }); LS.sel.delete(+b.dataset.del); await refreshMeta(); load(); });
+    if (w) {   // qatorlarni belgilash va tanlanganlarni birga o'chirish
+      const syncBar = () => { $('#selN').textContent = LS.sel.size; document.querySelector('.selinfo').classList.toggle('hidden', !LS.sel.size); $('#selPage').checked = !!ids.length && ids.every(i => LS.sel.has(i)); };
+      document.querySelectorAll('[data-sel]').forEach(c => c.onchange = () => { const id = +c.dataset.sel; c.checked ? LS.sel.add(id) : LS.sel.delete(id); c.closest('tr').classList.toggle('sel', c.checked); syncBar(); });
+      $('#selPage').onchange = e => { const on = e.target.checked; ids.forEach(i => on ? LS.sel.add(i) : LS.sel.delete(i)); document.querySelectorAll('[data-sel]').forEach(c => { c.checked = on; c.closest('tr').classList.toggle('sel', on); }); syncBar(); };
+      $('#selClear').onclick = () => { LS.sel.clear(); load(); };
+      $('#selDel').onclick = async () => {
+        const n = LS.sel.size; if (!n || !confirm(`Tanlangan ${nf(n)} ta lot o'chirilsinmi?\nBu amalni qaytarib bo'lmaydi.`)) return;
+        $('#selDel').disabled = true;
+        try { const r = await api('/lots/delete', { method: 'POST', json: { ids: [...LS.sel] } }); LS.sel.clear(); toast(`${nf(r.deleted)} ta lot o'chirildi`); await refreshMeta(); lots(); }
+        catch (e) { toast(e.message); $('#selDel').disabled = false; }
+      };
+    }
   }
   await load();
 }
-/* Lotlarni ommaviy o'chirish: joriy filtrga mos hammasi (filtr bo'lmasa, butun baza). Tasdiqlash belgisisiz tugma ishlamaydi. */
-function deleteAllDialog(total, f, onDone) {
-  const labels = { q: 'qidiruv', product: 'mahsulot', brand: 'brend', winner_region: "g'olib hududi", customer_region: 'buyurtmachi hududi', from: 'dan', to: 'gacha' };
-  const act = Object.entries(f || {}).filter(([, v]) => v);
-  const scope = act.length ? `Joriy filtrga mos <b>${nf(total)}</b> ta lot o'chiriladi:<div class="muted small" style="margin-top:4px">${act.map(([k, v]) => `${labels[k] || k}: ${esc(v)}`).join(' · ')}</div>`
-    : `<b>Butun bazadagi ${nf(total)} ta lot</b> o'chiriladi (filtr tanlanmagan).`;
-  modal(`<h2>Lotlarni o'chirish</h2><div class="bignote bad">${scope}</div>
-    <p class="muted">Bu amalni qaytarib bo'lmaydi. "Mening lotlarim" va mahsulotlarga tegilmaydi.</p>
-    <label class="xc"><input type="checkbox" id="daOk"><span>Tushundim, lotlar butunlay o'chiriladi</span></label>
-    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn danger" type="button" id="daGo" disabled>${nf(total)} ta lotni o'chirish</button></div>`);
-  $('#daOk').onchange = () => { $('#daGo').disabled = !$('#daOk').checked; };
-  $('#daGo').onclick = async () => {
-    $('#daGo').disabled = true;
-    try {
-      const r = await api('/lots?' + qs(f || {}), { method: 'DELETE' });
-      closeModal(); toast(`${nf(r.deleted)} ta lot o'chirildi`); onDone && onDone();
-    } catch (e) { toast(e.message); $('#daGo').disabled = false; }
+
+/* Lotni qo'lda qo'shish (Excel import o'rniga bittalab kiritish). "Saqlash va yana qo'shish" umumiy maydonlarni saqlab qoladi. */
+const REGIONS = ['Andijon', 'Buxoro', 'Jizzax', 'Qashqadaryo', 'Navoiy', 'Namangan', 'Samarqand', 'Surxondaryo', 'Sirdaryo', 'Toshkent viloyati', "Farg'ona", 'Xorazm', "Qoraqalpog'iston", 'Toshkent sh.'];
+const packKgJs = u => {   // lib/parse.js dagi packKg bilan bir xil qoida (faqat ko'rsatma uchun; hisoblashni server qiladi)
+  const s = String(u || '').toLowerCase().replace(',', '.'); let m = s.match(/(\d+(?:\.\d+)?)\s*(kg|кг)/); if (m) return +m[1];
+  m = s.match(/(\d+(?:\.\d+)?)\s*(l|litr|л)\b/); if (m) return +m[1];
+  if (/^\s*(kg|кг|килограмм)\s*$/.test(s)) return 1; if (/tonna|тонна/.test(s)) return 1000; return null;
+};
+function addLotDialog(pre = {}) {
+  const inp = (k, label, extra = '') => `<label>${label}<input id="al_${k}" value="${esc(pre[k] ?? '')}" ${extra}></label>`;
+  const num = (k, label) => inp(k, label, 'type="number" step="any"');
+  const reg = (k, label) => `<label>${label}<select id="al_${k}"><option value="">—</option>${REGIONS.map(r => `<option ${pre[k] === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>`;
+  modal(`<h2>Yangi lot qo'shish</h2><div class="formgrid">
+    <label>Sana *<input id="al_date" type="date" value="${esc(pre.date || nowLocal().slice(0, 10))}"></label>${inp('lot_no', 'Lot raqami *')}
+    ${inp('product', 'Mahsulot nomi *', 'list="dlProd" autocomplete="off"')}${inp('brand', 'Brend / Marka', 'list="dlBrand" autocomplete="off"')}
+    ${inp('unit', "O'lchov birligi", 'placeholder="Qop (25 kg)"')}${num('volume', 'Hajmi (qop / kg soni)')}
+    ${num('start_price', "Boshlang'ich narx (so'm, 1 birlik)")}${num('final_price', "Yakuniy narx (so'm, 1 birlik) *")}${num('bids', 'Takliflar soni')}
+    ${inp('customer', 'Buyurtmachi')}${reg('customer_region', 'Buyurtmachi hududi')}${inp('winner', "Yetkazib beruvchi (G'olib)")}${reg('winner_region', "G'olib hududi")}</div>
+    <datalist id="dlProd">${FILTERS.products.map(p => `<option value="${esc(p)}">`).join('')}</datalist><datalist id="dlBrand">${FILTERS.brands.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
+    <div id="alHint" class="muted small" style="margin-top:10px"></div>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn" type="button" id="alMore">Saqlash va yana qo'shish</button><button class="btn primary" type="button" id="alSave">Saqlash</button></div>`, true);
+  const hint = () => {
+    const unit = $('#al_unit').value.trim(), kg = packKgJs(unit), fin = parseFloat($('#al_final_price').value);
+    $('#alHint').innerHTML = !unit ? "1 kg narxi hisoblanishi uchun birlikni kg bilan yozing, masalan: Qop (25 kg)."
+      : kg ? `1 birlik = ${nf(kg)} kg${fin ? ` → 1 kg narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
+        : '<span class="warn">Birlikdan kg/litr aniqlanmadi (masalan: Qop (25 kg)); 1 kg narxi hisoblanmaydi va narx dinamikasida ko\'rinmaydi.</span>';
   };
+  $('#al_unit').oninput = hint; $('#al_final_price').oninput = hint; hint();
+  const keys = ['date', 'lot_no', 'product', 'brand', 'unit', 'volume', 'start_price', 'final_price', 'bids', 'customer', 'customer_region', 'winner', 'winner_region'];
+  const save = async more => {
+    if (document.querySelector('#modalBox .dt-text.invalid')) return toast('Sana noto\'g\'ri. Format: kk.oo.yyyy');
+    const b = {}; keys.forEach(k => b[k] = $('#al_' + k).value);
+    if (!b.date) return toast('Sanani kiriting');
+    if (!b.lot_no.trim() || !b.product.trim()) return toast('Lot raqami va mahsulot nomini kiriting');
+    if (b.final_price === '') return toast('Yakuniy narxni kiriting');
+    $('#alSave').disabled = $('#alMore').disabled = true;
+    try {
+      await api('/lots', { method: 'POST', json: b }); await refreshMeta(); toast(`Lot ${b.lot_no} qo'shildi`);
+      if (location.hash === '#lots') lots();
+      if (more) addLotDialog({ date: b.date, product: b.product, brand: b.brand, unit: b.unit, volume: b.volume, customer: b.customer, customer_region: b.customer_region });
+      else closeModal();
+    } catch (e) { toast(e.message); $('#alSave').disabled = $('#alMore').disabled = false; }
+  };
+  $('#alSave').onclick = () => save(false); $('#alMore').onclick = () => save(true);
 }
 function importDialog() {
   modal(`<h2>Lotlarni import qilish</h2>
