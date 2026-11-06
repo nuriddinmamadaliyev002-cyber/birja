@@ -213,12 +213,12 @@ function dateFields() {
 new MutationObserver(() => { if (_cf) return; _cf = requestAnimationFrame(() => { _cf = 0; cardify(); clearable(); dateFields(); numFields(); }); }).observe(document.body, { childList: true, subtree: true });
 
 /* ---------- holat ---------- */
-let ME = null, FILTERS = null, PRODUCTS = [];
+let ME = null, FILTERS = null, PRODUCTS = [], UNITS = [];
 const G = { from: '', to: '' }; // umumiy sana oralig'i
 
 const PAGES = [
   ['dashboard', 'Umumiy ko\'rinish'], ['mylots', 'Mening lotlarim'], ['lots', 'Lotlar bazasi'], ['trend', 'Narx dinamikasi'], ['margin', 'Marja kalkulyatori'],
-  ['rank', 'Raqobat va buyurtmachilar'], ['products', 'Mahsulotlarimiz'], ['settings', 'Sozlamalar'],
+  ['rank', 'Raqobat va buyurtmachilar'], ['products', 'Mahsulotlarimiz'], ['units', "O'lchov birliklari"], ['settings', 'Sozlamalar'],
 ];
 const canWrite = () => ME && ME.role !== 'viewer';
 
@@ -242,7 +242,7 @@ async function boot() {
   await refreshMeta();
   route();
 }
-async function refreshMeta() { [FILTERS, PRODUCTS] = await Promise.all([api('/filters'), api('/products'), refreshCounts()]); }
+async function refreshMeta() { [FILTERS, PRODUCTS, UNITS] = await Promise.all([api('/filters'), api('/products'), api('/units'), refreshCounts()]); }
 async function refreshCounts() {
   try { const c = await api('/my-lots/counts'); document.querySelectorAll('[data-cnt]').forEach(e => { const n = c[e.dataset.cnt]; e.textContent = n > 0 ? n : ''; }); } catch { }
 }
@@ -393,6 +393,7 @@ async function lots() {
 
 /* Lotni qo'lda qo'shish (Excel import o'rniga bittalab kiritish). "Saqlash va yana qo'shish" umumiy maydonlarni saqlab qoladi. */
 const REGIONS = ['Andijon', 'Buxoro', 'Jizzax', 'Qashqadaryo', 'Navoiy', 'Namangan', 'Samarqand', 'Surxondaryo', 'Sirdaryo', 'Toshkent viloyati', "Farg'ona", 'Xorazm', "Qoraqalpog'iston", 'Toshkent sh.'];
+const kgf = v => String(+Number(v).toFixed(3));   // 25 -> "25", 0.5 -> "0.5"
 const packKgJs = u => {   // lib/parse.js dagi packKg bilan bir xil qoida (faqat ko'rsatma uchun; hisoblashni server qiladi)
   const s = String(u || '').toLowerCase().replace(',', '.'); let m = s.match(/(\d+(?:\.\d+)?)\s*(kg|кг)/); if (m) return +m[1];
   m = s.match(/(\d+(?:\.\d+)?)\s*(l|litr|л)\b/); if (m) return +m[1];
@@ -405,19 +406,20 @@ function addLotDialog(pre = {}) {
   modal(`<h2>Yangi lot qo'shish</h2><div class="formgrid">
     <label>Sana *<input id="al_date" type="date" value="${esc(pre.date || nowLocal().slice(0, 10))}"></label>${inp('lot_no', 'Lot raqami *')}
     ${inp('product', 'Mahsulot nomi *', 'list="dlProd" autocomplete="off"')}${inp('brand', 'Brend / Marka', 'list="dlBrand" autocomplete="off"')}
-    ${inp('unit', "O'lchov birligi", 'placeholder="Qop (25 kg)"')}${num('volume', 'Hajmi (qop / kg soni)')}
+    <label>O'lchov birligi<select id="al_unit"><option value="">— tanlang —</option>${UNITS.map(u => `<option value="${esc(u.name)}" ${pre.unit === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>${num('volume', 'Hajmi (qop / kg soni)')}
     ${num('start_price', "Boshlang'ich narx (so'm, 1 birlik)")}${num('final_price', "Yakuniy narx (so'm, 1 birlik) *")}${num('bids', 'Takliflar soni')}
     ${inp('customer', 'Buyurtmachi')}${reg('customer_region', 'Buyurtmachi hududi')}${inp('winner', "Yetkazib beruvchi (G'olib)")}${reg('winner_region', "G'olib hududi")}</div>
     <datalist id="dlProd">${FILTERS.products.map(p => `<option value="${esc(p)}">`).join('')}</datalist><datalist id="dlBrand">${FILTERS.brands.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
     <div id="alHint" class="muted small" style="margin-top:10px"></div>
     <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn" type="button" id="alMore">Saqlash va yana qo'shish</button><button class="btn primary" type="button" id="alSave">Saqlash</button></div>`, true);
   const hint = () => {
-    const unit = $('#al_unit').value.trim(), kg = packKgJs(unit), fin = parseFloat($('#al_final_price').value);
-    $('#alHint').innerHTML = !unit ? "1 kg narxi hisoblanishi uchun birlikni kg bilan yozing, masalan: Qop (25 kg)."
-      : kg ? `1 birlik = ${nf(kg)} kg${fin ? ` → 1 kg narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
-        : '<span class="warn">Birlikdan kg/litr aniqlanmadi (masalan: Qop (25 kg)); 1 kg narxi hisoblanmaydi va narx dinamikasida ko\'rinmaydi.</span>';
+    const unit = $('#al_unit').value, un = UNITS.find(u => u.name === unit), kg = un ? un.pack_kg : null, fin = parseFloat($('#al_final_price').value);
+    $('#alHint').innerHTML = !UNITS.length ? `<span class="warn">Birliklar ro'yxati bo'sh. Avval <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida birlik qo'shing.</span>`
+      : !unit ? `Birlikni ro'yxatdan tanlang. Kerakli birlik yo'q bo'lsa, <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida qo'shing.`
+        : kg ? `1 birlik = ${kgf(kg)} kg${fin ? ` → 1 kg narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
+          : '<span class="warn">Bu birlikda kg/litr hajmi ko\'rsatilmagan, shuning uchun 1 kg narxi hisoblanmaydi (narx dinamikasida ko\'rinmaydi). «O\'lchov birliklari» menyusida hajmni kiriting.</span>';
   };
-  $('#al_unit').oninput = hint; $('#al_final_price').oninput = hint; hint();
+  $('#al_unit').onchange = hint; $('#al_final_price').oninput = hint; hint();
   const keys = ['date', 'lot_no', 'product', 'brand', 'unit', 'volume', 'start_price', 'final_price', 'bids', 'customer', 'customer_region', 'winner', 'winner_region'];
   const save = async more => {
     if (document.querySelector('#modalBox .dt-text.invalid')) return toast('Sana noto\'g\'ri. Format: kk.oo.yyyy');
@@ -567,6 +569,46 @@ async function rank() {
       <div style="text-align:right;margin-top:14px"><button class="btn" onclick="closeModal()">Yopish</button></div>`, true);
   }
   await load();
+}
+
+/* ---------- O'lchov birliklari (nomenklatura) ---------- */
+async function units() {
+  await refreshMeta();
+  const w = canWrite();
+  $('#view').innerHTML = head("O'lchov birliklari", "Nomenklatura: lotni qo'lda qo'shishda «O'lchov birligi» dropdown'i shu ro'yxatdan to'ldiriladi",
+    w ? `<button class="btn" id="uSync">Lotlardan yangilash</button> <button class="btn primary" id="uAdd">+ Birlik</button>` : '') + `
+    <div class="tablewrap"><table><thead><tr><th>№</th><th>Nomi</th><th class="num">1 birlik (kg / l)</th><th class="num">Lotlarda</th><th></th></tr></thead><tbody>
+    ${UNITS.map((u, i) => `<tr><td class="muted c-hide">${i + 1}</td><td class="c-title">${esc(u.name)}</td>
+      <td class="num">${u.pack_kg != null ? kgf(u.pack_kg) : '<span class="warn">kiritilmagan</span>'}</td><td class="num">${nf(u.used)}</td>
+      <td class="nowrap">${w ? `<button class="btn small" data-ue="${u.id}">✎</button> <button class="btn small danger" data-ud="${u.id}">×</button>` : ''}</td></tr>`).join('')
+      || `<tr><td colspan="5" class="muted">Hozircha birlik yo'q. "+ Birlik" yoki "Lotlardan yangilash" tugmasini bosing.</td></tr>`}
+    </tbody></table></div>
+    <p class="muted small">"1 birlik" — Qop (25 kg) uchun 25. Shundan 1 kg narxi hisoblanadi. Nomda kg/litr yozilgan bo'lsa (masalan "Qop (25 kg)"), hajm o'zi aniqlanadi. Birlik o'chirilsa, mavjud lotlar o'zgarmaydi.</p>`;
+  const form = u => {
+    modal(`<h2>${u ? 'Birlikni tahrirlash' : 'Yangi o\'lchov birligi'}</h2><div class="formgrid">
+      <label>Nomi *<input id="u_name" value="${esc(u ? u.name : '')}" placeholder="Qop (25 kg)" autocomplete="off"></label>
+      <label>1 birlik necha kg / litr<input id="u_pack" type="number" step="any" value="${esc(u && u.pack_kg != null ? u.pack_kg : '')}"></label></div>
+      <div id="uHint" class="muted small" style="margin-top:10px"></div>
+      ${u ? `<p class="muted small">Nomi yoki hajmi o'zgarsa, shu birlikdagi lotlar ham yangilanadi (1 kg narxi qayta hisoblanadi).${u.used ? ` Hozir ${nf(u.used)} ta lot.` : ''}</p>` : ''}
+      <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn primary" type="button" id="uSave">Saqlash</button></div>`);
+    const hint = () => { const a = packKgJs($('#u_name').value), p = parseFloat($('#u_pack').value);
+      $('#uHint').textContent = p > 0 ? '' : a ? `Hajm nomdan aniqlandi: ${kgf(a)} kg/l` : "Nomda kg/litr yo'q: hajmni o'zingiz kiriting, aks holda 1 kg narxi hisoblanmaydi."; };
+    $('#u_name').oninput = hint; $('#u_pack').oninput = hint; hint();
+    $('#uSave').onclick = async () => {
+      try {
+        const r = await api(u ? '/units/' + u.id : '/units', { method: u ? 'PUT' : 'POST', json: { name: $('#u_name').value, pack_kg: $('#u_pack').value } });
+        closeModal(); toast(u ? `Saqlandi${r.updated_lots ? ` · ${nf(r.updated_lots)} ta lot yangilandi` : ''}` : "Birlik qo'shildi"); units();
+      } catch (e) { toast(e.message); }
+    };
+  };
+  if ($('#uAdd')) $('#uAdd').onclick = () => form(null);
+  if ($('#uSync')) $('#uSync').onclick = async () => { try { const r = await api('/units/sync', { method: 'POST' }); toast(r.added ? `${r.added} ta yangi birlik qo'shildi` : "Yangi birlik topilmadi (hamma birlik ro'yxatda)"); units(); } catch (e) { toast(e.message); } };
+  document.querySelectorAll('[data-ue]').forEach(b => b.onclick = () => form(UNITS.find(x => x.id == b.dataset.ue)));
+  document.querySelectorAll('[data-ud]').forEach(b => b.onclick = async () => {
+    const u = UNITS.find(x => x.id == b.dataset.ud);
+    if (!confirm(`«${u.name}» ro'yxatdan o'chirilsinmi?\n${u.used ? `Mavjud ${u.used} ta lot o'zgarmaydi.` : ''}`)) return;
+    try { await api('/units/' + u.id, { method: 'DELETE' }); units(); } catch (e) { toast(e.message); }
+  });
 }
 
 /* ---------- Mahsulotlar ---------- */
@@ -814,5 +856,5 @@ async function settings() {
   document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => { if (confirm('Foydalanuvchi o\'chirilsinmi?')) { await api('/users/' + b.dataset.u, { method: 'DELETE' }); settings(); } });
 }
 
-const VIEWS = { dashboard, mylots, lots, trend, margin, rank, products, settings };
+const VIEWS = { dashboard, mylots, lots, trend, margin, rank, products, units, settings };
 boot();

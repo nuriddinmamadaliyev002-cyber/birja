@@ -15,6 +15,13 @@ Ixtiyoriy: `npm run demo` — 700 ta DEMO lot (admin paneldan o'chiriladi).
 "Lotlar bazasi" → "Excel/CSV import" (shablon shu yerda). Lot raqami bo'yicha dublikat bo'lmaydi.
 Qadoq hajmi o'lchov birligidan olinadi ("Qop (30 kg)" → 30), 1 kg narx = yakuniy narx / kg.
 
+## O'lchov birliklari (nomenklatura)
+Menyu: O'lchov birliklari. "Lotlar bazasi" → "+ Yangi lot" dagi «O'lchov birligi» dropdown'i shu ro'yxatdan to'ladi.
+- Nomi ("Qop (25 kg)") va "1 birlik necha kg/litr" (nomda kg yozilgan bo'lsa o'zi aniqlanadi). 1 kg narxi shu hajmdan hisoblanadi.
+- Birinchi ishga tushishda ro'yxat mavjud lotlardagi birliklardan to'ldiriladi; keyinchalik "Lotlardan yangilash" tugmasi yangi birliklarni qo'shadi.
+- Birlik nomi yoki hajmi o'zgartirilsa, shu birlikdagi lotlar ham yangilanadi (1 kg narxi qayta hisoblanadi). Birlik o'chirilsa, lotlar o'zgarmaydi.
+- Excel importda ham ro'yxatdagi hajm ishlatiladi (nomdan taxmin qilishdan ustun).
+
 ## Mening lotlarim (o'zimiz ishtirok etgan lotlar)
 Menyu: Mening lotlarim → Yangi / G'olib bo'lingan / Yutqazilgan / Rad etilgan.
 - Lotni qo'lda ("+ Yangi lot") yoki xarid.uzex.uz dagi "mening lotlarim" jadvalini Excel/CSV qilib import qilish mumkin (status matnidan holat avtomatik aniqlanadi; shablon shu yerda).

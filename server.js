@@ -174,7 +174,8 @@ app.post('/api/lots', auth, writer, ah(async (req, res) => {
   if (!dm || dd.getUTCFullYear() !== +dm[1] || dd.getUTCMonth() !== +dm[2] - 1 || dd.getUTCDate() !== +dm[3]) return res.status(400).json({ error: 'Sana noto\'g\'ri' });
   if (final_price === null || Number.isNaN(final_price) || final_price < 0) return res.status(400).json({ error: 'Yakuniy narxni to\'g\'ri kiriting' });
   if ([start_price, volume, bids].some(x => Number.isNaN(x) || (x !== null && x < 0))) return res.status(400).json({ error: 'Narx, hajm yoki takliflar sonida xato' });
-  const pack_kg = P.packKg(unit);
+  const un = unit ? await db.get('SELECT pack_kg FROM units WHERE lower(name)=lower(?)', [unit]) : null;
+  const pack_kg = un && un.pack_kg != null ? un.pack_kg : P.packKg(unit);
   try {
     const row = await db.get(`INSERT INTO lots (lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg,is_demo)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0) RETURNING id`,
@@ -198,6 +199,9 @@ const lotArgs = r => [r.lot_no, r.date, r.product, r.brand, r.unit, r.pack_kg, r
 
 async function importLots(rows) {
   let ins = 0, upd = 0;
+  // nomenklaturadagi birlik bo'lsa, kg hajmi shu yerdan olinadi (nomdan taxmin qilishdan ustun)
+  const um = new Map((await db.all('SELECT name, pack_kg FROM units WHERE pack_kg IS NOT NULL')).map(u => [u.name.toLowerCase(), u.pack_kg]));
+  for (const r of rows) { const pk = r.unit && um.get(r.unit.toLowerCase()); if (pk) { r.pack_kg = pk; r.price_per_kg = r.final_price / pk; } }
   await db.tx(async t => {
     for (const r of rows) { const o = await t.run(UPSERT, lotArgs(r)); o.rows[0].inserted ? ins++ : upd++; }
   });
@@ -305,6 +309,41 @@ app.put('/api/products/:id', auth, writer, ah(async (req, res) => {
 }));
 app.delete('/api/products/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM products WHERE id=?', [req.params.id]); res.json({ ok: true }); }));
 
+/* ---------------- o'lchov birliklari nomenklaturasi ---------------- */
+// name: "Qop (25 kg)"; pack_kg berilmasa nomdan aniqlanadi (25), aniqlanmasa bo'sh qoladi
+function unitBody(b) {
+  const name = String(b.name || '').replace(/\s+/g, ' ').trim();
+  if (!name) return { error: 'Birlik nomini kiriting' };
+  let pk = b.pack_kg === '' || b.pack_kg == null ? null : Number(String(b.pack_kg).replace(/\s/g, '').replace(',', '.'));
+  if (pk !== null && !(Number.isFinite(pk) && pk > 0)) return { error: 'Hajm (kg/litr) musbat son bo\'lishi kerak' };
+  return { name, pack_kg: pk === null ? P.packKg(name) : pk };
+}
+const UNITS_FROM_LOTS = `INSERT INTO units(name, pack_kg) SELECT unit, MAX(pack_kg) FROM lots WHERE unit IS NOT NULL AND unit<>'' GROUP BY unit ON CONFLICT DO NOTHING`;
+app.get('/api/units', auth, ah(async (req, res) => res.json(await db.all(
+  'SELECT u.*, (SELECT COUNT(*) FROM lots l WHERE l.unit=u.name)::int AS used FROM units u ORDER BY lower(u.name)'))));
+app.post('/api/units', auth, writer, ah(async (req, res) => {
+  const u = unitBody(req.body || {}); if (u.error) return res.status(400).json({ error: u.error });
+  try { const r = await db.get('INSERT INTO units(name,pack_kg) VALUES (?,?) RETURNING id', [u.name, u.pack_kg]); res.json({ id: r.id }); }
+  catch (e) { if (e.code === '23505') return res.status(400).json({ error: 'Bu birlik ro\'yxatda allaqachon bor' }); throw e; }
+}));
+app.put('/api/units/:id', auth, writer, ah(async (req, res) => {
+  const id = parseInt(req.params.id, 10) || 0, u = unitBody(req.body || {}); if (u.error) return res.status(400).json({ error: u.error });
+  const old = await db.get('SELECT * FROM units WHERE id=?', [id]); if (!old) return res.status(404).json({ error: 'Birlik topilmadi' });
+  try {
+    let updated = 0;
+    await db.tx(async t => {
+      await t.run('UPDATE units SET name=?, pack_kg=? WHERE id=?', [u.name, u.pack_kg, id]);
+      if (old.name !== u.name || old.pack_kg !== u.pack_kg)       // shu birlikdagi lotlar ham yangilanadi (nom va 1 kg narxi)
+        updated = (await t.run('UPDATE lots SET unit=?, pack_kg=?::float8, price_per_kg=CASE WHEN ?::float8>0 THEN final_price/?::float8 END WHERE unit=?',
+          [u.name, u.pack_kg, u.pack_kg, u.pack_kg, old.name])).changes;
+    });
+    res.json({ ok: true, updated_lots: updated });
+  } catch (e) { if (e.code === '23505') return res.status(400).json({ error: 'Bu nomdagi birlik allaqachon bor' }); throw e; }
+}));
+app.delete('/api/units/:id', auth, writer, ah(async (req, res) => { await db.run('DELETE FROM units WHERE id=?', [parseInt(req.params.id, 10) || 0]); res.json({ ok: true }); }));
+// lotlarda uchraydigan, lekin ro'yxatda yo'q birliklarni qo'shish
+app.post('/api/units/sync', auth, writer, ah(async (req, res) => res.json({ added: (await db.run(UNITS_FROM_LOTS)).changes })));
+
 /* ---------------- Mening lotlarim ---------------- */
 app.use('/api/my-lots', auth, require('./lib/mylots')({ db, ah, writer, P }));
 
@@ -327,10 +366,16 @@ async function seedProducts() {
   console.log(`Mahsulotlar yuklandi: ${items.length} ta`);
 }
 
+async function seedUnits() {   // birinchi marta: mavjud lotlardagi birliklar nomenklaturaga ko'chiriladi
+  if ((await db.get('SELECT COUNT(*) c FROM units')).c) return;
+  const n = (await db.run(UNITS_FROM_LOTS)).changes; if (n) console.log(`O'lchov birliklari lotlardan yuklandi: ${n} ta`);
+}
+
 async function main() {
   await init();
   const pw = await ensureAdmin();
   await seedProducts();
+  await seedUnits();
   if (pw) console.log(`\n>>> Birinchi ishga tushirish. Login: admin   Parol: ${pw}\n    (kirgandan keyin parolni almashtiring)\n`);
   const port = process.env.PORT || 3000;
   app.listen(port, () => console.log(`Tizim ishga tushdi: http://localhost:${port}`));
