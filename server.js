@@ -166,12 +166,15 @@ app.post('/api/lots/delete', auth, writer, ah(async (req, res) => {
 // Lotni qo'lda qo'shish / tahrirlash (Excel importdagi ustunlar bilan bir xil; lot raqami takrorlansa rad etiladi).
 // Tekshiruv va 1 kg narxini hisoblash POST va PUT uchun umumiy: { error } yoki { v: [lot_no, date, ..., price_per_kg] } qaytaradi
 const LOT_COLS = 'lot_no,date,product,brand,unit,pack_kg,volume,start_price,final_price,bids,customer,customer_region,winner,winner_region,price_per_kg';
-async function lotBody(b) {
+async function lotBody(b, old = null) {   // old: tahrirlanayotgan lot (yangi lotda null)
   const t = v => { const s = v == null ? '' : String(v).replace(/\s+/g, ' ').trim(); return s || null; };
   const n = v => { const s = t(v); if (s === null) return null; const x = Number(s.replace(/\s/g, '').replace(',', '.')); return Number.isFinite(x) ? x : NaN; };
   const lot_no = t(b.lot_no), product = t(b.product), date = t(b.date), unit = t(b.unit);
   const final_price = n(b.final_price), start_price = n(b.start_price), volume = n(b.volume), bids = n(b.bids);
   if (!lot_no || !product) return { error: 'Lot raqami va mahsulot nomi kerak' };
+  // Buyurtmachi va g'olib majburiy. Tahrirlashda: import qilingan va ilgari bo'sh bo'lgan lotni boshqa maydonlari uchun saqlash mumkin
+  if (!t(b.customer) && (!old || old.customer)) return { error: 'Buyurtmachini kiriting' };
+  if (!t(b.winner) && (!old || old.winner)) return { error: "G'olib (ijrochi) nomini kiriting" };
   const dm = date && date.match(/^(\d{4})-(\d{2})-(\d{2})$/), dd = dm && new Date(Date.UTC(+dm[1], +dm[2] - 1, +dm[3]));
   if (!dm || dd.getUTCFullYear() !== +dm[1] || dd.getUTCMonth() !== +dm[2] - 1 || dd.getUTCDate() !== +dm[3]) return { error: 'Sana noto\'g\'ri' };
   if (final_price === null || Number.isNaN(final_price) || final_price < 0) return { error: 'Yakuniy narxni to\'g\'ri kiriting' };
@@ -193,8 +196,9 @@ app.post('/api/lots', auth, writer, ah(async (req, res) => {
 // Tahrirlash: tahrirlangan lot haqiqiy ma'lumot hisoblanadi (is_demo=0), aks holda "Demoni o'chirish" uni ham o'chirib yuborardi
 app.put('/api/lots/:id', auth, writer, ah(async (req, res) => {
   const id = parseInt(req.params.id, 10) || 0;
-  if (!(await db.get('SELECT id FROM lots WHERE id=?', [id]))) return res.status(404).json({ error: 'Lot topilmadi' });
-  const x = await lotBody(req.body || {}); if (x.error) return res.status(400).json({ error: x.error });
+  const old = await db.get('SELECT id, customer, winner FROM lots WHERE id=?', [id]);
+  if (!old) return res.status(404).json({ error: 'Lot topilmadi' });
+  const x = await lotBody(req.body || {}, old); if (x.error) return res.status(400).json({ error: x.error });
   try {
     await db.run(`UPDATE lots SET ${LOT_COLS.split(',').map(c => c + '=?').join(',')}, is_demo=0 WHERE id=?`, [...x.v, id]);
     res.json({ ok: true });

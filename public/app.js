@@ -394,7 +394,7 @@ async function lots() {
     <label>Dan<input type="date" id="ffrom" value="${LS.f.from || ''}"></label><label>Gacha<input type="date" id="fto" value="${LS.f.to || ''}"></label>
     <button class="btn small" id="freset">Tozalash</button>
   </div>
-  <div class="bar only-m"><label>Saralash<select id="mSort">${[['date', 'Sana'], ['product', 'Mahsulot'], ['final_price', 'Yakuniy narx'], ['total_sum', 'Summa'], ['price_per_kg', '1 kg narxi'], ['discount', 'Narx tushishi'], ['bids', 'Takliflar']].map(([k, t]) => `<option value="${k}" ${LS.sort === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+  <div class="bar only-m"><label>Saralash<select id="mSort">${[['date', 'Sana'], ['product', 'Mahsulot'], ['final_price', 'Yakuniy narx'], ['total_sum', 'Summa'], ['price_per_kg', '1 kg/l narxi'], ['discount', 'Narx tushishi'], ['bids', 'Takliflar']].map(([k, t]) => `<option value="${k}" ${LS.sort === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
     <button class="btn" id="mDir" style="flex:none"></button></div><div id="lotsOut"></div>`;
   bindDemo();
   const read = () => { LS.f = { q: $('#fq').value, product: $('#fproduct').value, brand: $('#fbrand').value, winner_region: $('#fwinner_region').value, customer_region: $('#fcustomer_region').value, from: $('#ffrom').value, to: $('#fto').value }; LS.page = 1; LS.sel.clear(); load(); };   // filtr o'zgarsa tanlov bekor bo'ladi (ko'rinmagan lotlar o'chib ketmasin)
@@ -415,11 +415,11 @@ async function lots() {
     const selBar = w ? `<div class="selbar"><label class="xc"><input type="checkbox" id="selPage" ${ids.length && ids.every(i => LS.sel.has(i)) ? 'checked' : ''} ${ids.length ? '' : 'disabled'}><span>Sahifadagilarni tanlash</span></label>
       <span class="selinfo ${LS.sel.size ? '' : 'hidden'}"><span><b id="selN">${LS.sel.size}</b> ta tanlandi</span><button class="btn small danger" type="button" id="selDel">Tanlanganlarni o'chirish</button><button class="btn small" type="button" id="selClear">Bekor qilish</button></span></div>` : '';
     $('#lotsOut').innerHTML = selBar + `<div class="tablewrap"><table><thead><tr>${w ? '<th class="c-sel"></th>' : ''}${th('date', 'Sana')}${th('product', 'Mahsulot')}<th>Brend</th><th>Birlik</th>
-      ${th('final_price', 'Boshl. → Yakuniy', 'num')}${th('total_sum', 'Summa', 'num')}${th('price_per_kg', '1 kg narxi', 'num')}${th('discount', 'Tushish', 'num')}${th('bids', 'Takl.', 'num')}<th>G'olib</th><th>Buyurtmachi</th><th>Lot №</th>${canWrite() ? '<th></th>' : ''}</tr></thead><tbody>
+      ${th('final_price', 'Boshl. → Yakuniy', 'num')}${th('total_sum', 'Summa', 'num')}${th('price_per_kg', '1 kg/l narxi', 'num')}${th('discount', 'Tushish', 'num')}${th('bids', 'Takl.', 'num')}<th>Buyurtmachi</th><th>G'olib (ijrochi)</th><th>Lot №</th>${canWrite() ? '<th></th>' : ''}</tr></thead><tbody>
       ${d.rows.map(r => `<tr class="${LS.sel.has(r.id) ? 'sel' : ''}">${w ? `<td class="c-sel"><input type="checkbox" data-sel="${r.id}" aria-label="Tanlash" ${LS.sel.has(r.id) ? 'checked' : ''}></td>` : ''}<td class="nowrap">${r.date}${r.is_demo ? ' <span class="pill demo">demo</span>' : ''}</td><td class="c-title">${esc(r.product)}</td><td>${esc(r.brand)}</td><td class="nowrap">${esc(r.unit)}${r.volume != null ? `<div class="muted small">× ${nf(r.volume)}</div>` : ''}</td>
       <td class="num nowrap"><span class="muted">${nf(r.start_price)}</span> → <b>${nf(r.final_price)}</b></td><td class="num nowrap">${nf(r.total_sum)}</td><td class="num">${nf(r.price_per_kg)}</td>
       <td class="num ${r.discount_pct > 20 ? 'warn' : ''}">${pct(r.discount_pct)}</td><td class="num">${r.bids ?? '—'}</td>
-      <td>${esc(r.winner)}<div class="muted small">${esc(r.winner_region)}</div></td><td>${esc(r.customer)}<div class="muted small">${esc(r.customer_region)}</div></td>
+      <td>${esc(r.customer)}<div class="muted small">${esc(r.customer_region)}</div></td><td>${esc(r.winner)}<div class="muted small">${esc(r.winner_region)}</div></td>
       <td class="small muted">${esc(r.lot_no)}</td>${canWrite() ? `<td class="nowrap"><button class="btn small" data-elot="${r.id}" title="Tahrirlash" aria-label="Tahrirlash">✎</button> <button class="btn small danger" data-del="${r.id}" title="O'chirish" aria-label="O'chirish">×</button></td>` : ''}</tr>`).join('') || `<tr><td colspan="14" class="muted">Hech narsa topilmadi</td></tr>`}
       </tbody></table></div>
       <div class="pager"><span class="muted">${nf(d.total)} ta natija</span><button class="btn small" id="pp" ${LS.page <= 1 ? 'disabled' : ''}>←</button><span>${LS.page} / ${pages}</span><button class="btn small" id="pn" ${LS.page >= pages ? 'disabled' : ''}>→</button></div>`;
@@ -446,6 +446,7 @@ async function lots() {
 
 /* Lotni qo'lda qo'shish (Excel import o'rniga bittalab kiritish). "Saqlash va yana qo'shish" umumiy maydonlarni saqlab qoladi. */
 const REGIONS = ['Andijon', 'Buxoro', 'Jizzax', 'Qashqadaryo', 'Navoiy', 'Namangan', 'Samarqand', 'Surxondaryo', 'Sirdaryo', 'Toshkent viloyati', "Farg'ona", 'Xorazm', "Qoraqalpog'iston", 'Toshkent sh.'];
+const isLiter = u => { const s = String(u || '').toLowerCase().replace(',', '.'); return !/kg|кг/.test(s) && /(\d\s*(l|л)\b|litr|литр)/.test(s); };   // birlik litrda bo'lsa true
 const kgf = v => String(+Number(v).toFixed(3));   // 25 -> "25", 0.5 -> "0.5"
 const packKgJs = u => {   // lib/parse.js dagi packKg bilan bir xil qoida (faqat ko'rsatma uchun; hisoblashni server qiladi)
   const s = String(u || '').toLowerCase().replace(',', '.'); let m = s.match(/(\d+(?:\.\d+)?)\s*(kg|кг)/); if (m) return +m[1];
@@ -461,9 +462,9 @@ function addLotDialog(pre = {}, editId = null) {   // editId bo'lsa: shu lotni t
   modal(`<h2>${editId ? 'Lotni tahrirlash' : "Yangi lot qo'shish"}</h2><div class="formgrid">
     <label>Sana *<input id="al_date" type="date" value="${esc(pre.date || nowLocal().slice(0, 10))}"></label>${inp('lot_no', 'Lot raqami *')}
     ${inp('product', 'Mahsulot nomi *', 'autocomplete="off" placeholder="nomini yozing…"')}${inp('brand', 'Brend / Marka', 'list="dlBrand" autocomplete="off"')}
-    <label>O'lchov birligi<select id="al_unit"><option value="">— tanlang —</option>${unitList.map(u => `<option value="${esc(u.name)}" ${pre.unit === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>${num('volume', 'Hajmi (qop / kg soni)')}
+    <label>O'lchov birligi<select id="al_unit"><option value="">— tanlang —</option>${unitList.map(u => `<option value="${esc(u.name)}" ${pre.unit === u.name ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></label>${num('volume', 'Hajmi (qop/kg/litr/dona)')}
     ${num('start_price', "Boshlang'ich narx (so'm, 1 birlik)")}${num('final_price', "Yakuniy narx (so'm, 1 birlik) *")}${num('bids', 'Takliflar soni')}
-    ${inp('customer', 'Buyurtmachi')}${reg('customer_region', 'Buyurtmachi hududi')}${inp('winner', "Yetkazib beruvchi (G'olib)")}${reg('winner_region', "G'olib hududi")}</div>
+    ${inp('customer', 'Buyurtmachi *')}${reg('customer_region', 'Buyurtmachi hududi')}${inp('winner', "G'olib (ijrochi) *")}${reg('winner_region', "G'olib hududi")}</div>
     <datalist id="dlBrand">${FILTERS.brands.map(p => `<option value="${esc(p)}">`).join('')}</datalist>
     <div id="alHint" class="muted small" style="margin-top:10px"></div>
     <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button>${editId ? '' : '<button class="btn" type="button" id="alMore">Saqlash va yana qo\'shish</button>'}<button class="btn primary" type="button" id="alSave">Saqlash</button></div>`, true);
@@ -475,8 +476,8 @@ function addLotDialog(pre = {}, editId = null) {   // editId bo'lsa: shu lotni t
       sumLine = vol >= 0 && fin >= 0 ? `<div style="margin-bottom:6px">Shartnoma summasi: <b>${nf(Math.round(vol * fin * 100) / 100)}</b> so'm <span class="muted">(${nf(vol)} × ${nf(fin)})</span></div>` : '';
     $('#alHint').innerHTML = pnote + sumLine + (!unitList.length ? `<span class="warn">Birliklar ro'yxati bo'sh. Avval <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida birlik qo'shing.</span>`
       : !unit ? `Birlikni ro'yxatdan tanlang. Kerakli birlik yo'q bo'lsa, <a href="#units" onclick="closeModal()">«O'lchov birliklari»</a> menyusida qo'shing.`
-        : kg ? `1 birlik = ${kgf(kg)} kg${fin ? ` → 1 kg narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
-          : '<span class="warn">Bu birlikda kg/litr hajmi ko\'rsatilmagan, shuning uchun 1 kg narxi hisoblanmaydi (narx dinamikasida ko\'rinmaydi). «O\'lchov birliklari» menyusida hajmni kiriting.</span>');
+        : kg ? `1 birlik = ${kgf(kg)} ${isLiter(unit) ? 'litr' : 'kg'}${fin ? ` → 1 ${isLiter(unit) ? 'litr' : 'kg'} narxi: <b>${nf(fin / kg)}</b> so'm` : ''}`
+          : '<span class="warn">Bu birlikda kg/litr hajmi ko\'rsatilmagan, shuning uchun 1 kg (litr) narxi hisoblanmaydi (narx dinamikasida ko\'rinmaydi). «O\'lchov birliklari» menyusida hajmni kiriting.</span>');
   };
   suggest($('#al_product'), () => EXCH.map(e => e.name), hint);
   $('#al_product').addEventListener('input', hint);
@@ -488,6 +489,8 @@ function addLotDialog(pre = {}, editId = null) {   // editId bo'lsa: shu lotni t
     if (!b.date) return toast('Sanani kiriting');
     if (!b.lot_no.trim() || !b.product.trim()) return toast('Lot raqami va mahsulot nomini kiriting');
     if (b.final_price === '') return toast('Yakuniy narxni kiriting');
+    if (!b.customer.trim() && (!editId || pre.customer)) return toast('Buyurtmachini kiriting');
+    if (!b.winner.trim() && (!editId || pre.winner)) return toast("G'olib (ijrochi) nomini kiriting");
     busy(true);
     try {
       await api(editId ? '/lots/' + editId : '/lots', { method: editId ? 'PUT' : 'POST', json: b }); await refreshMeta(); toast(editId ? `Lot ${b.lot_no} saqlandi` : `Lot ${b.lot_no} qo'shildi`);
