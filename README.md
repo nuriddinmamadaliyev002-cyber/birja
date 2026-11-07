@@ -56,3 +56,10 @@ HTTPS ortida ishlating, `COOKIE_SECURE=1`. Bazadan muntazam nusxa oling: `pg_dum
 
 ## Tuzilma
 server.js (API) · lib/db.js (PostgreSQL, sxema) · lib/parse.js (Excel tahlili) · lib/names.js (korxona nomlarini solishtirish) · public/ (interfeys) · seed/ (mahsulotlar Excel)
+
+## Savdolar statistikasi va tugallanmagan savdolar
+Menyular: «Savdolar statistikasi» (avval «Umumiy ko'rinish»), «Tugallangan savdolar» (avval «Lotlar bazasi»), yangi «Tugallanmagan savdolar».
+«Tugallanmagan savdolar»: xarid.uzex.uz «Tushgan takliflar» jadvali ustunlari (Lot №, Tovar №, Mahsulot, boshlanish/tugash sanasi, Soni, Boshlang'ich narx, Men taklif etgan narx) Excel/CSV orqali yuklanadi. Lot raqami takrorlansa yangilanadi.
+Mahsulot nomlari «Birja mahsulotlari» ro'yxatiga bog'lanadi (qo'lda «Bog'lash» yoki «Birja mahsulotlari» → qatorlarni belgilab «Birlashtirish»); bog'lash bir marta qilinadi, keyingi importlarda o'zi almashtiriladi (jadval `product_aliases`).
+«Savdolar statistikasi»: mahsulot va holat (hammasi / tugallangan / tugallanmagan) filtri; mahsulot tanlansa narx dinamikasi, tushish taqsimoti, boshlang'ich↔yakuniy narx, takliflar soni, hududlar va tugallanmagan lotlar uchun kutilayotgan yakuniy narx (tarixiy median tushish bo'yicha) chiqadi.
+Yangi jadvallar (`open_lots`, `product_aliases`) server ishga tushganda o'zi yaratiladi.

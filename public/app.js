@@ -268,7 +268,7 @@ let ME = null, FILTERS = null, PRODUCTS = [], UNITS = [], EXCH = [];
 const G = { from: '', to: '' }; // umumiy sana oralig'i
 
 const PAGES = [
-  ['dashboard', 'Umumiy ko\'rinish'], ['mylots', 'Mening lotlarim'], ['lots', 'Lotlar bazasi'], ['trend', 'Narx dinamikasi'], ['margin', 'Marja kalkulyatori'],
+  ['dashboard', 'Savdolar statistikasi'], ['mylots', 'Mening lotlarim'], ['lots', 'Tugallangan savdolar'], ['openlots', 'Tugallanmagan savdolar'], ['trend', 'Narx dinamikasi'], ['margin', 'Marja kalkulyatori'],
   ['rank', 'Raqobat va buyurtmachilar'], ['products', 'Mahsulotlarimiz'], ['exchprod', 'Birja mahsulotlari'], ['units', "O'lchov birliklari"], ['settings', 'Sozlamalar'],
 ];
 const canWrite = () => ME && ME.role !== 'viewer';
@@ -327,7 +327,7 @@ function route() {
 function head(title, sub, right = '') { return `<div class="page-head"><div><h1>${esc(title)}</h1><div class="muted">${esc(sub || '')}</div></div><div>${right}</div></div>`; }
 function demoBanner() {
   const r = FILTERS.range; if (!r || !r.demo) return '';
-  return `<div class="banner"><span><b>DEMO ma'lumot ko'rsatilmoqda</b> (${r.demo} ta lot). Raqamlar haqiqiy emas, tizimni sinash uchun. Haqiqiy lotlarni "Lotlar bazasi"dan import qiling.</span>${ME.role === 'admin' ? '<button class="btn small" id="delDemo">Demoni o\'chirish</button>' : ''}</div>`;
+  return `<div class="banner"><span><b>DEMO ma'lumot ko'rsatilmoqda</b> (${r.demo} ta lot). Raqamlar haqiqiy emas, tizimni sinash uchun. Haqiqiy lotlarni «Tugallangan savdolar» bo'limidan import qiling.</span>${ME.role === 'admin' ? '<button class="btn small" id="delDemo">Demoni o\'chirish</button>' : ''}</div>`;
 }
 function bindDemo() { const b = $('#delDemo'); if (b) b.onclick = async () => { if (!confirm('Barcha demo lotlar o\'chiriladi. Davom etasizmi?')) return; const r = await api('/demo', { method: 'DELETE' }); toast(`${r.deleted} ta demo lot o'chirildi`); await refreshMeta(); route(); }; }
 function dateBar(onchange) {
@@ -340,50 +340,104 @@ function bindDateBar(reload) {
   $('#gReset').onclick = () => { G.from = G.to = ''; reload(); };
 }
 function emptyState() {
-  return `<div class="card"><h2>Hozircha lotlar yo'q</h2><p class="muted">Boshlash uchun "Lotlar bazasi" bo'limiga o'tib Excel/CSV faylni import qiling.</p><a class="btn primary" href="#lots">Lotlar bazasiga o'tish</a></div>`;
+  return `<div class="card"><h2>Hozircha lotlar yo'q</h2><p class="muted">Boshlash uchun «Tugallangan savdolar» bo'limiga o'tib Excel/CSV faylni import qiling.</p><a class="btn primary" href="#lots">Tugallangan savdolarga o'tish</a></div>`;
 }
 
-/* ---------- Dashboard ---------- */
+/* ---------- Savdolar statistikasi ---------- */
+const SS = { product: '', status: 'all' };   // status: all | done (tugallangan) | open (tugallanmagan)
 async function dashboard() {
-  if (!FILTERS.range.n) { $('#view').innerHTML = head('Umumiy ko\'rinish') + emptyState(); return; }
-  $('#view').innerHTML = head('Umumiy ko\'rinish', 'Birja bozorining qisqacha holati') + demoBanner() + dateBar() + '<div id="dash"></div>';
+  $('#view').innerHTML = head('Savdolar statistikasi', 'Tugallangan va tugallanmagan savdolar tahlili: boshlang\'ich narx, yakuniy narx va tushish') + demoBanner() + `
+  <div class="bar">
+    <label>Mahsulot<select id="sProd"><option value="">Barcha mahsulotlar</option>${EXCH.map(e => `<option value="${esc(e.name)}" ${SS.product === e.name ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></label>
+    <label>Holat<select id="sSt"><option value="all">Hammasi</option><option value="done" ${SS.status === 'done' ? 'selected' : ''}>Tugallangan savdolar</option><option value="open" ${SS.status === 'open' ? 'selected' : ''}>Tugallanmagan savdolar</option></select></label>
+  </div>` + dateBar() + '<div id="dash"></div>';
   bindDemo(); bindDateBar(load);
+  $('#sProd').onchange = e => { SS.product = e.target.value; load(); };
+  $('#sSt').onchange = e => { SS.status = e.target.value; load(); };
   async function load() {
     charts.forEach(c => c.destroy()); charts = [];
-    const q = qs({ from: G.from, to: G.to });
-    const [s, tr, w, pr, rg] = await Promise.all([
-      api('/analytics/summary?' + q), api('/analytics/trend?interval=month&' + q), api('/analytics/rank?by=winner&limit=8&' + q),
-      api('/analytics/rank?by=product&limit=8&' + q), api('/analytics/rank?by=customer_region&limit=10&' + q)]);
-    $('#dash').innerHTML = `
-    <div class="grid g4">
-      <div class="card kpi"><div class="l">Lotlar soni</div><div class="v">${nf(s.lots)}</div></div>
-      <div class="card kpi"><div class="l">Taxminiy aylanma (yakuniy narx × hajm)</div><div class="v">${mln(s.turnover_est)}</div></div>
-      <div class="card kpi"><div class="l">O'rtacha takliflar soni</div><div class="v">${nf(s.avg_bids, 1)}</div></div>
-      <div class="card kpi"><div class="l">O'rtacha narx tushishi</div><div class="v">${pct(s.avg_discount)}</div></div>
-      <div class="card kpi"><div class="l">Faol g'oliblar</div><div class="v">${nf(s.winners)}</div></div>
-      <div class="card kpi"><div class="l">Buyurtmachilar</div><div class="v">${nf(s.customers)}</div></div>
-    </div>
-    <div class="grid g2" style="margin-top:14px">
-      <div class="card"><h2>Oylar bo'yicha lotlar soni</h2><div class="chart"><canvas id="c1"></canvas></div></div>
-      <div class="card"><h2>Oylar bo'yicha o'rtacha narx tushishi (%)</h2><div class="chart"><canvas id="c2"></canvas></div></div>
-      <div class="card"><h2>Eng ko'p lot yutgan kompaniyalar</h2><div class="chart"><canvas id="c3"></canvas></div></div>
-      <div class="card"><h2>Mahsulotlar bo'yicha lotlar</h2><div class="chart"><canvas id="c4"></canvas></div></div>
-      <div class="card"><h2>Buyurtmachi hududlari</h2><div class="chart"><canvas id="c5"></canvas></div></div>
-    </div>`;
+    const q = qs({ from: G.from, to: G.to }), showDone = SS.status !== 'open', showOpen = SS.status !== 'done';
+    const st = await api('/analytics/stats?' + qs({ product: SS.product, from: G.from, to: G.to }));
+    if (!st.done_n && !st.open_n && !SS.product && !FILTERS.range.n) { $('#dash').innerHTML = emptyState(); return; }
+    const kpi = (l, v, extra = '') => `<div class="card kpi"><div class="l">${l}</div><div class="v">${v}</div>${extra}</div>`;
     const C = [css('--c1'), css('--c2'), css('--c3'), css('--c4')];
-    chart($('#c1'), { type: 'bar', data: { labels: tr.map(r => r.period), datasets: [{ label: 'Lotlar', data: tr.map(r => r.n), backgroundColor: C[0] }] }, options: chartBase({ plugins: { legend: { display: false } } }) });
-    chart($('#c2'), { type: 'line', data: { labels: tr.map(r => r.period), datasets: [{ label: 'Tushish %', data: tr.map(r => r.discount), borderColor: C[1], backgroundColor: C[1], tension: .25 }] }, options: chartBase({ plugins: { legend: { display: false } } }) });
-    const hbar = (id, rows, color) => chart($(id), { type: 'bar', data: { labels: rows.map(r => r.name.length > 28 ? r.name.slice(0, 27) + '…' : r.name), datasets: [{ label: 'Lotlar', data: rows.map(r => r.lots), backgroundColor: color }] }, options: chartBase({ indexAxis: 'y', interaction: { mode: 'index', axis: 'y', intersect: false }, plugins: { legend: { display: false } } }) });
-    hbar('#c3', w, C[2]); hbar('#c4', pr, C[3]); hbar('#c5', rg, C[0]);
+    const noLeg = { plugins: { legend: { display: false } } };
+    const card = (title, id, h) => `<div class="card"><h2>${title}</h2><div class="chart"${h ? ` style="height:${h}px"` : ''}><canvas id="${id}"></canvas></div></div>`;
+    const hbar = (id, labels, data, color, label) => chart($(id), { type: 'bar', data: { labels: labels.map(n => n.length > 28 ? n.slice(0, 27) + '…' : n), datasets: [{ label, data, backgroundColor: color }] }, options: chartBase({ indexAxis: 'y', interaction: { mode: 'index', axis: 'y', intersect: false }, ...noLeg }) });
+    const openLink = `<a href="#openlots">Tugallanmagan savdolar</a>`;
+
+    if (!SS.product) {   // umumiy ko'rinish
+      let html = `<div class="grid g4">${kpi('Tugallangan savdolar', nf(st.done_n))}${kpi('Tugallanmagan savdolar', nf(st.open_n), `<div class="muted small">${nf(st.open_active)} tasi hali davom etmoqda</div>`)}</div>`;
+      if (showDone && st.done_n) {
+        const [s, tr, w, pr, rg] = await Promise.all([api('/analytics/summary?' + q), api('/analytics/trend?interval=month&' + q), api('/analytics/rank?by=winner&limit=8&' + q),
+          api('/analytics/rank?by=product&limit=8&' + q), api('/analytics/rank?by=customer_region&limit=10&' + q)]);
+        html += `<div class="grid g4" style="margin-top:14px">${kpi('Taxminiy aylanma (yakuniy narx × hajm)', mln(s.turnover_est))}${kpi('O\'rtacha takliflar soni', nf(s.avg_bids, 1))}
+          ${kpi('O\'rtacha narx tushishi', pct(s.avg_discount))}${kpi('Faol g\'oliblar', nf(s.winners))}${kpi('Buyurtmachilar', nf(s.customers))}</div>
+        <div class="grid g2" style="margin-top:14px">${card('Oylar bo\'yicha lotlar soni', 'c1')}${card('Oylar bo\'yicha o\'rtacha narx tushishi (%)', 'c2')}${card('Eng ko\'p lot yutgan kompaniyalar', 'c3')}${card('Mahsulotlar bo\'yicha lotlar', 'c4')}${card('Buyurtmachi hududlari', 'c5')}</div>`;
+        html += prodTable(st.products, showOpen);
+        $('#dash').innerHTML = html;
+        chart($('#c1'), { type: 'bar', data: { labels: tr.map(r => r.period), datasets: [{ label: 'Lotlar', data: tr.map(r => r.n), backgroundColor: C[0] }] }, options: chartBase(noLeg) });
+        chart($('#c2'), { type: 'line', data: { labels: tr.map(r => r.period), datasets: [{ label: 'Tushish %', data: tr.map(r => r.discount), borderColor: C[1], backgroundColor: C[1], tension: .25 }] }, options: chartBase(noLeg) });
+        hbar('#c3', w.map(r => r.name), w.map(r => r.lots), C[2], 'Lotlar'); hbar('#c4', pr.map(r => r.name), pr.map(r => r.lots), C[3], 'Lotlar'); hbar('#c5', rg.map(r => r.name), rg.map(r => r.lots), C[0], 'Lotlar');
+      } else {
+        html += (showDone ? emptyState() : '') + prodTable(st.products, showOpen);
+        if (!showDone) html += `<p class="muted small" style="margin-top:10px">Tugallanmagan savdolarni ${openLink} bo'limida import qiling va ko'ring. Mahsulotni tanlasangiz, tarixiy narxlar bilan taqqoslanadi.</p>`;
+        $('#dash').innerHTML = html;
+      }
+      document.querySelectorAll('[data-pick]').forEach(a => a.onclick = e => { e.preventDefault(); SS.product = a.dataset.pick; dashboard(); });
+      return;
+    }
+
+    // bitta mahsulot
+    const d = st.done || { n: 0 }, u = st.basis === 'kg' ? (st.unit && /(l|л|litr)\b/i.test(st.unit) && !/kg|кг/i.test(st.unit) ? 'litr' : 'kg') : 'birlik', cur = `so'm/${u}`;
+    let html = `<div class="grid g4">${kpi('Tugallangan savdolar', nf(st.done_n))}${kpi('Tugallanmagan savdolar', nf(st.open_n), `<div class="muted small">${nf(st.open_active)} tasi hali davom etmoqda</div>`)}
+      ${showDone && d.n ? kpi('O\'rtacha boshlang\'ich narx', nf(d.avg_start), `<div class="muted small">${cur}</div>`) + kpi('O\'rtacha yakuniy narx', nf(d.avg_final), `<div class="muted small">median ${nf(d.median_final)} · ${nf(d.min_final)}–${nf(d.max_final)}</div>`)
+        + kpi('O\'rtacha tushish', pct(d.avg_disc), `<div class="muted small">median ${pct(d.median_disc)}</div>`) + kpi('O\'rtacha takliflar', nf(d.avg_bids, 1)) : ''}</div>`;
+    if (showDone && !d.n) html += `<div class="card muted" style="margin-top:14px">«${esc(SS.product)}» bo'yicha tugallangan savdo topilmadi${G.from || G.to ? ' (tanlangan davrda)' : ''}.</div>`;
+    if (showDone && d.n) {
+      html += `<p class="muted small" style="margin:10px 2px">Narxlar <b>${cur}</b> hisobida${st.basis === 'kg' ? ` (qadoq hajmi ma'lum lotlar; asosiy birlik: ${esc(st.unit || '')})` : ' (1 dona/birlik narxi)'}.${st.excluded ? ` ${nf(st.excluded)} ta lotda qadoq hajmi yo'q, ular hisobga olinmadi.` : ''}</p>
+      <div class="grid g2">${card('Narx dinamikasi: boshlang\'ich va yakuniy narx', 'p1')}${card('Narx tushishi taqsimoti (lotlar soni)', 'p2')}${card('Boshlang\'ich va yakuniy narx (har bir lot)', 'p3')}${card('Takliflar soni va o\'rtacha tushish (%)', 'p4')}${st.regions.length ? card('Buyurtmachi hududlari bo\'yicha o\'rtacha yakuniy narx', 'p5') : ''}</div>`;
+    }
+    if (showOpen) {
+      html += `<h2 style="margin:18px 2px 8px">Tugallanmagan savdolar (${nf(st.open.length)})</h2>` + (st.open.length ? `<div class="grid g2">${st.open.some(o => o.s != null) ? card('Boshlang\'ich, kutilayotgan va taklif qilingan narx', 'p6') : ''}</div>
+      <div class="tablewrap" style="margin-top:14px"><table><thead><tr><th>Lot №</th><th>Tugash</th><th class="num">Soni</th><th class="num">Boshl. narx</th><th class="num">Kutilayotgan yakuniy</th><th class="num">Mening taklifim</th><th class="num">Taklifdan yuqori yakunlanganlar</th></tr></thead><tbody>
+      ${st.open.map(o => `<tr><td class="small">${esc(o.lot_no)}</td><td class="nowrap">${esc(String(o.ends_at || '').slice(0, 16))}${o.active ? ' <span class="pill st-new">faol</span>' : ' <span class="pill">tugagan</span>'}</td><td class="num">${nf(o.quantity)}</td>
+      <td class="num">${nf(o.s)}</td><td class="num">${nf(o.expected)}</td><td class="num"><b>${nf(o.m)}</b></td><td class="num">${o.beat == null ? '—' : pct(o.beat)}</td></tr>`).join('')}</tbody></table></div>
+      <p class="muted small" style="margin-top:8px">Kutilayotgan yakuniy narx = boshlang'ich narx − tarixiy median tushish (${d.n ? pct(d.median_disc) : '—'}). «Taklifdan yuqori yakunlanganlar» — tarixda yakuniy narxi sizning taklifingizdan yuqori bo'lgan savdolar ulushi: qancha yuqori bo'lsa, shuncha yaxshi (${cur}).</p>`
+        : `<div class="card muted">Bu mahsulot bo'yicha tugallanmagan savdo yo'q. ${canWrite() ? `${openLink} bo'limidan import qiling.` : ''}</div>`);
+    }
+    $('#dash').innerHTML = html;
+    if (showDone && d.n) {
+      chart($('#p1'), { type: 'line', data: { labels: st.trend.map(r => r.period), datasets: [
+        { label: 'Boshlang\'ich (o\'rtacha)', data: st.trend.map(r => r.avg_start), borderColor: C[3], backgroundColor: C[3], borderDash: [5, 3], tension: .2 },
+        { label: 'Yakuniy (o\'rtacha)', data: st.trend.map(r => r.avg_final), borderColor: C[0], backgroundColor: C[0], tension: .2 },
+        { label: 'Yakuniy (median)', data: st.trend.map(r => r.median_final), borderColor: C[2], backgroundColor: C[2], tension: .2, pointRadius: 2 }] }, options: chartBase({ scales: { y: { title: { display: true, text: cur } } } }) });
+      chart($('#p2'), { type: 'bar', data: { labels: st.hist.map(h => h.label), datasets: [{ label: 'Lotlar', data: st.hist.map(h => h.n), backgroundColor: C[1] }] }, options: chartBase(noLeg) });
+      const mx = Math.max(...st.scatter.map(p => Math.max(p.x, p.y)), 1);
+      chart($('#p3'), { type: 'scatter', data: { datasets: [{ label: 'Lot', data: st.scatter, backgroundColor: C[0], pointRadius: 3 }, { label: 'Narx tushmagan (y = x)', type: 'line', data: [{ x: 0, y: 0 }, { x: mx, y: mx }], borderColor: css('--muted'), borderDash: [4, 3], pointRadius: 0 }] },
+        options: chartBase({ interaction: { mode: 'nearest', intersect: true }, scales: { x: { title: { display: true, text: 'Boshlang\'ich narx, ' + cur } }, y: { title: { display: true, text: 'Yakuniy narx, ' + cur } } } }) });
+      chart($('#p4'), { type: 'bar', data: { labels: st.bids.map(b => b.label + ' (' + b.n + ')'), datasets: [{ label: 'O\'rtacha tushish %', data: st.bids.map(b => b.avg_disc), backgroundColor: C[3] }] }, options: chartBase({ ...noLeg, scales: { x: { title: { display: true, text: 'Takliflar soni (lotlar)' } } } }) });
+      if (st.regions.length) hbar('#p5', st.regions.map(r => `${r.name} (${r.n})`), st.regions.map(r => r.avg_final), C[2], cur);
+    }
+    if (showOpen && $('#p6')) {
+      const o = st.open.filter(x => x.s != null).slice(0, 15);
+      chart($('#p6'), { type: 'bar', data: { labels: o.map(x => x.lot_no.slice(-6)), datasets: [{ label: 'Boshlang\'ich', data: o.map(x => x.s), backgroundColor: C[3] }, { label: 'Kutilayotgan yakuniy', data: o.map(x => x.expected), backgroundColor: C[0] }, { label: 'Mening taklifim', data: o.map(x => x.m), backgroundColor: C[1] }] }, options: chartBase({ scales: { y: { title: { display: true, text: cur } } } }) });
+    }
   }
   await load();
 }
+function prodTable(rows, showOpen) {
+  if (!rows.length) return '';
+  return `<h2 style="margin:18px 2px 8px">Mahsulotlar kesimi</h2><div class="tablewrap"><table><thead><tr><th>Mahsulot</th><th class="num">Tugallangan</th><th class="num">O'rtacha tushish</th>${showOpen ? '<th class="num">Tugallanmagan</th>' : ''}</tr></thead><tbody>
+    ${rows.map(r => `<tr><td class="c-title"><a href="#" data-pick="${esc(r.name)}">${esc(r.name)}</a></td><td class="num">${nf(r.done)}</td><td class="num">${pct(r.avg_disc)}</td>${showOpen ? `<td class="num">${nf(r.open)}</td>` : ''}</tr>`).join('')}</tbody></table></div>
+    <p class="muted small" style="margin-top:6px">Mahsulot nomini bosing: shu mahsulot bo'yicha narx grafiklari ochiladi.</p>`;
+}
 
-/* ---------- Lotlar ---------- */
+/* ---------- Tugallangan savdolar (lotlar bazasi) ---------- */
 const LS = { page: 1, sort: 'date', dir: 'desc', f: {}, sel: new Set() };   // sel: belgilangan lot id lari (sahifalar bo'ylab saqlanadi)
 async function lots() {
   const f = FILTERS;
-  $('#view').innerHTML = head('Lotlar bazasi', `${nf(f.range.n)} ta lot${f.range.min ? ` · ${f.range.min} — ${f.range.max}` : ''}`,
+  $('#view').innerHTML = head('Tugallangan savdolar', `${nf(f.range.n)} ta lot${f.range.min ? ` · ${f.range.min} — ${f.range.max}` : ''}`,
     canWrite() ? `<a class="btn small" href="/api/lots/template">Shablon (.xlsx)</a> <button class="btn" id="imp">Excel/CSV import</button> <button class="btn primary" id="addLot">+ Yangi lot</button>` : '') + demoBanner() + `
   <div class="bar">
     <label>Qidiruv<input data-clear id="fq" placeholder="mahsulot, brend, kompaniya, lot №" value="${esc(LS.f.q || '')}" style="width:240px"></label>
@@ -518,6 +572,93 @@ function importDialog() {
   };
 }
 window.closeModal = closeModal;
+
+/* ---------- Tugallanmagan savdolar ---------- */
+const OS = { page: 1, sort: 'ends_at', dir: 'asc', f: {} };
+async function openlots() {
+  const w = canWrite(), f = OS.f;
+  $('#view').innerHTML = head('Tugallanmagan savdolar', 'Hali yakunlanmagan savdolar (xarid.uzex.uz «Tushgan takliflar» jadvali)',
+    w ? `<a class="btn small" href="/api/open-lots/template">Shablon (.xlsx)</a> <button class="btn primary" id="oImp">Excel/CSV import</button>` : '') + `
+  <div class="grid g4" id="oKpi"></div>
+  <div class="bar" style="margin-top:14px">
+    <label>Qidiruv<input data-clear id="oQ" placeholder="mahsulot, lot №, tovar №" value="${esc(f.q || '')}" style="width:220px"></label>
+    <label>Mahsulot<select id="oProd"><option value="">Barchasi</option>${EXCH.map(e => `<option value="${esc(e.name)}" ${f.product === e.name ? 'selected' : ''}>${esc(e.name)}</option>`).join('')}</select></label>
+    <label>Holat<select id="oState"><option value="">Hammasi</option><option value="active" ${f.state === 'active' ? 'selected' : ''}>Davom etmoqda</option><option value="ended" ${f.state === 'ended' ? 'selected' : ''}>Muddati tugagan</option></select></label>
+    <label>Mahsulot nomi<select id="oMatch"><option value="">Barchasi</option><option value="0" ${f.matched === '0' ? 'selected' : ''}>Bog'lanmagan</option></select></label>
+    <button class="btn small" id="oReset">Tozalash</button></div><div id="oOut"></div>`;
+  const read = () => { OS.f = { q: $('#oQ').value, product: $('#oProd').value, state: $('#oState').value, matched: $('#oMatch').value }; OS.page = 1; load(); };
+  ['oProd', 'oState', 'oMatch'].forEach(i => $('#' + i).onchange = read); $('#oQ').oninput = debounce(read);
+  $('#oReset').onclick = () => { OS.f = {}; OS.page = 1; openlots(); };
+  if (w) $('#oImp').onclick = openImportDialog;
+  async function load() {
+    const d = await api('/open-lots?' + qs({ ...OS.f, page: OS.page, sort: OS.sort, dir: OS.dir, limit: 50 }));
+    if (!d.rows.length && OS.page > 1) { OS.page = Math.max(1, Math.ceil(d.total / d.limit)); return load(); }
+    const kp = (l, v, cls = '') => `<div class="card kpi"><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
+    $('#oKpi').innerHTML = kp('Jami', nf(d.summary.n)) + kp('Davom etmoqda', nf(d.summary.active)) + kp('Mahsuloti bog\'lanmagan', nf(d.summary.unmatched), d.summary.unmatched ? 'warn' : '');
+    const th = (k, t, cls = '') => `<th class="s ${cls}" data-s="${k}">${t}${OS.sort === k ? (OS.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
+    const pages = Math.max(1, Math.ceil(d.total / d.limit));
+    $('#oOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>Lot №</th><th>Tovar №</th>${th('product', 'Mahsulot')}${th('starts_at', 'Boshlanish')}${th('ends_at', 'Tugash')}${th('start_price', 'Boshlang\'ich narx', 'num')}<th class="num">Soni</th>${th('total', 'Summa', 'num')}${th('my_price', 'Men taklif etgan narx', 'num')}${w ? '<th></th>' : ''}</tr></thead><tbody>
+      ${d.rows.map(r => `<tr><td class="small">${esc(r.lot_no)}</td><td class="small muted">${esc(r.tovar_no)}</td>
+        <td class="c-title">${esc(r.product)}${r.matched ? '' : ` <span class="pill demo" title="Birja mahsulotlari ro'yxatida yo'q">bog'lanmagan</span>${w ? ` <button class="btn small" data-link="${r.id}">Bog'lash</button>` : ''}`}${r.product_raw && r.product_raw !== r.product && r.matched ? `<div class="muted small">saytda: ${esc(r.product_raw)}</div>` : ''}</td>
+        <td class="nowrap">${esc(String(r.starts_at || '').slice(0, 16))}</td><td class="nowrap">${esc(String(r.ends_at || '').slice(0, 16))} ${r.active ? '<span class="pill st-new">faol</span>' : '<span class="pill">tugagan</span>'}</td>
+        <td class="num nowrap">${nf(r.start_price)}</td><td class="num">${nf(r.quantity)}</td><td class="num nowrap">${nf(r.total)}</td><td class="num nowrap">${r.my_price == null ? '<span class="muted">—</span>' : `<b>${nf(r.my_price)}</b>`}</td>
+        ${w ? `<td class="nowrap"><button class="btn small" data-oe="${r.id}" title="Tahrirlash" aria-label="Tahrirlash">✎</button> <button class="btn small danger" data-od="${r.id}" title="O'chirish" aria-label="O'chirish">×</button></td>` : ''}</tr>`).join('')
+        || `<tr><td colspan="10" class="muted">${d.summary.n ? 'Hech narsa topilmadi' : 'Hozircha ma\'lumot yo\'q. «Excel/CSV import» orqali yuklang.'}</td></tr>`}</tbody></table></div>
+      <div class="pager"><span class="muted">${nf(d.total)} ta natija</span><button class="btn small" id="opp" ${OS.page <= 1 ? 'disabled' : ''}>←</button><span>${OS.page} / ${pages}</span><button class="btn small" id="opn" ${OS.page >= pages ? 'disabled' : ''}>→</button></div>`;
+    document.querySelectorAll('#oOut th.s').forEach(t => t.onclick = () => { const k = t.dataset.s; OS.dir = OS.sort === k && OS.dir === 'asc' ? 'desc' : 'asc'; OS.sort = k; load(); });
+    $('#opp').onclick = () => { OS.page--; load(); }; $('#opn').onclick = () => { OS.page++; load(); };
+    const byId = new Map(d.rows.map(r => [r.id, r]));
+    document.querySelectorAll('[data-od]').forEach(b => b.onclick = async () => { if (!confirm('Lot o\'chirilsinmi?')) return; await api('/open-lots/' + b.dataset.od, { method: 'DELETE' }); load(); });
+    document.querySelectorAll('[data-oe]').forEach(b => b.onclick = () => openEditDialog(byId.get(+b.dataset.oe), load));
+    document.querySelectorAll('[data-link]').forEach(b => b.onclick = () => openLinkDialog(byId.get(+b.dataset.link), load));
+  }
+  await load();
+}
+function openEditDialog(r, done) {
+  modal(`<h2>Lotni tahrirlash</h2><p class="muted small">Lot ${esc(r.lot_no)}</p><div class="formgrid">
+    <label>Mahsulot *<input id="oe_product" value="${esc(r.product)}" autocomplete="off"></label>
+    <label>Soni<input id="oe_quantity" type="number" step="any" value="${r.quantity ?? ''}"></label>
+    <label>Boshlang'ich narx (so'm)<input id="oe_start_price" type="number" step="any" value="${r.start_price ?? ''}"></label>
+    <label>Men taklif etgan narx (so'm)<input id="oe_my_price" type="number" step="any" value="${r.my_price ?? ''}"></label></div>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn primary" type="button" id="oeSave">Saqlash</button></div>`);
+  suggest($('#oe_product'), () => EXCH.map(e => e.name), () => { });
+  $('#oeSave').onclick = async () => {
+    const b = {}; ['product', 'quantity', 'start_price', 'my_price'].forEach(k => b[k] = $('#oe_' + k).value);
+    try { await api('/open-lots/' + r.id, { method: 'PUT', json: b }); closeModal(); toast('Saqlandi'); done(); } catch (e) { toast(e.message); }
+  };
+}
+// saytdagi nomni Birja mahsulotlaridagi nomga bog'lash (shu nomli hamma lotlar yangilanadi, keyingi importlarda o'zi bog'lanadi)
+function openLinkDialog(r, done, raw = null) {
+  raw = raw || r.product_raw || r.product;
+  modal(`<h2>Mahsulotni bog'lash</h2><p>Saytdagi nom: <b>${esc(raw)}</b></p><div class="formgrid" style="grid-template-columns:1fr">
+    <label>Birja mahsulotlaridagi nom *<input id="ol_t" autocomplete="off" placeholder="nomini yozing…"></label></div>
+    <p class="muted small">Shu nomli barcha tugallanmagan lotlar tanlangan mahsulotga o'tadi va keyingi importlarda ham o'zi bog'lanadi. Ro'yxatda yo'q nomni yozsangiz, yangi mahsulot sifatida qo'shiladi.</p>
+    <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn primary" type="button" id="olSave">Bog'lash</button></div>`);
+  suggest($('#ol_t'), () => EXCH.map(e => e.name), () => { });
+  $('#olSave').onclick = async () => {
+    const t = $('#ol_t').value.trim(); if (!t) return toast('Mahsulot nomini kiriting');
+    const exists = EXCH.some(e => e.name.toLowerCase() === t.toLowerCase());
+    if (!exists && !confirm(`«${t}» «Birja mahsulotlari» ro'yxatida yo'q. Yangi mahsulot sifatida qo'shilsinmi?`)) return;
+    try { const o = await api('/open-lots/map-product', { method: 'POST', json: { raw, target: t, add: !exists } }); await refreshMeta(); closeModal(); toast(`«${o.name}» ga bog'landi (${nf(o.updated)} ta lot)`); done(); } catch (e) { toast(e.message); }
+  };
+}
+function openImportDialog() {
+  modal(`<h2>Tugallanmagan savdolarni import qilish</h2>
+  <p class="muted">.xlsx yoki .csv. Ustunlar: <b>Lot №, Tovar №, Mahsulot, Lotning boshlanish sanasi, Lotning tugash sanasi, Soni, Boshlang'ich narx, Men taklif etgan narx</b>. «Taklif etilish sanasi» va «Amallar» ustunlari kerak emas (bo'lsa, e'tiborga olinmaydi). Lot raqami takrorlansa, yozuv yangilanadi.</p>
+  <input type="file" id="oiFile" accept=".xlsx,.xls,.csv"><div id="oiOut" style="margin:12px 0"></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeModal()">Yopish</button><button class="btn primary" id="oiGo">Yuklash</button></div>`);
+  $('#oiGo').onclick = async () => {
+    const file = $('#oiFile').files[0]; if (!file) return toast('Fayl tanlang');
+    const fd = new FormData(); fd.append('file', file); $('#oiOut').textContent = 'Yuklanmoqda…';
+    try {
+      const r = await api('/open-lots/import', { method: 'POST', form: fd });
+      $('#oiOut').innerHTML = `<div class="bignote good">Yangi: <b>${r.inserted}</b> · Yangilandi: <b>${r.updated}</b> · O'tkazib yuborildi: <b>${r.skipped}</b></div>
+        ${r.unmatched.length ? `<div class="warn small" style="margin-top:8px">Birja mahsulotlariga bog'lanmagan nomlar (${r.unmatched.length}): ${r.unmatched.map(esc).join(', ')}. Jadvalda «Bog'lash» tugmasini bosing.</div>` : ''}
+        ${r.errors.length ? `<ul class="small bad">${r.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}`;
+      await refreshMeta(); setTimeout(() => { if (location.hash === '#openlots') openlots(); }, 100);
+    } catch (e) { $('#oiOut').innerHTML = `<div class="bad">${esc(e.message)}</div>`; }
+  };
+}
 
 /* ---------- Narx dinamikasi ---------- */
 const TS = { own: '', keywords: '', product: '', interval: 'month', region: '' };
@@ -755,9 +896,10 @@ async function exchprod() {
   const w = canWrite();
   $('#view').innerHTML = head('Birja mahsulotlari', "Nomenklatura: lotni qo'lda qo'shishda «Mahsulot nomi» maydoniga yozganda shu ro'yxatdan qidirib topiladi",
     w ? `<button class="btn" id="eSync">Lotlardan yangilash</button> <button class="btn primary" id="eAdd">+ Mahsulot</button>` : '') + `
-    <div class="bar"><label>Qidiruv<input data-clear id="eQ" placeholder="mahsulot nomi" style="width:260px"></label><span class="muted small" id="eCnt"></span></div>
+    <div class="bar"><label>Qidiruv<input data-clear id="eQ" placeholder="mahsulot nomi" style="width:260px"></label><span class="muted small" id="eCnt"></span>
+      <span id="eMerge" class="hidden"><b>0</b> ta tanlandi <button class="btn small primary" id="eMergeGo" type="button">Birlashtirish</button></span></div>
     <div id="eOut"></div>
-    <p class="muted small">Nomi o'zgartirilsa, shu nomdagi lotlar ham yangilanadi. Mahsulot ro'yxatdan o'chirilsa, mavjud lotlar o'zgarmaydi.</p>`;
+    <p class="muted small">Nomi o'zgartirilsa, shu nomdagi lotlar ham yangilanadi. Bir mahsulotning turlicha yozilgan nomlarini qatorni belgilab «Birlashtirish» orqali bitta nom ostiga yig'ing. Mahsulot ro'yxatdan o'chirilsa, mavjud lotlar o'zgarmaydi.</p>`;
   const form = x => {
     modal(`<h2>${x ? 'Mahsulotni tahrirlash' : 'Yangi birja mahsuloti'}</h2><div class="formgrid" style="grid-template-columns:1fr">
       <label>Nomi *<input id="e_name" value="${esc(x ? x.name : '')}" placeholder="Shtukaturka (Gipsli)" autocomplete="off"></label></div>
@@ -772,15 +914,35 @@ async function exchprod() {
     };
     $('#eSave').onclick = save; $('#e_name').onkeydown = e => { if (e.key === 'Enter') save(); };
   };
+  const EM = new Set();   // birlashtirish uchun tanlangan mahsulotlar
+  const mergeBar = () => {
+    const el = $('#eMerge'); if (!el) return;
+    el.classList.toggle('hidden', EM.size < 2);
+    el.querySelector('b').textContent = EM.size;
+  };
+  const mergeDialog = () => {
+    const sel = EXCH.filter(x => EM.has(x.id)).sort((a, b) => b.used - a.used);
+    modal(`<h2>Mahsulotlarni birlashtirish</h2><p class="muted small">Tanlangan nomlar bitta asosiy nom ostiga yig'iladi: tugallangan va tugallanmagan savdolardagi nomlar almashtiriladi, eski nomlar keyingi importlarda o'zi almashtiriladi.</p>
+      <div style="margin:8px 0">${sel.map((x, i) => `<label class="xc" style="display:flex;gap:8px;margin:4px 0"><input type="radio" name="mt" value="${esc(x.name)}" ${i ? '' : 'checked'}><span>${esc(x.name)} <span class="muted small">(${nf(x.used)} + ${nf(x.open_used)})</span></span></label>`).join('')}</div>
+      <label>Yoki yangi asosiy nom<input id="em_new" placeholder="bo'sh qoldirilsa, yuqoridagi tanlangani olinadi" autocomplete="off"></label>
+      <div class="actions"><button class="btn" type="button" onclick="closeModal()">Bekor</button><button class="btn primary" type="button" id="emGo">Birlashtirish</button></div>`);
+    $('#emGo').onclick = async () => {
+      const target = $('#em_new').value.trim() || document.querySelector('input[name=mt]:checked').value;
+      if (!confirm(`${sel.length} ta mahsulot «${target}» nomi ostida birlashtirilsinmi?`)) return;
+      try { const r = await api('/exchange-products/merge', { method: 'POST', json: { target, names: sel.map(x => x.name) } }); closeModal(); toast(`Birlashtirildi · ${nf(r.updated_lots)} ta lot yangilandi`); exchprod(); } catch (e) { toast(e.message); }
+    };
+  };
   const draw = () => {
     const words = $('#eQ').value.toLowerCase().split(/\s+/).filter(Boolean);
     const rows = EXCH.filter(x => words.every(wd => x.name.toLowerCase().includes(wd)));
     $('#eCnt').textContent = words.length ? `${nf(rows.length)} / ${nf(EXCH.length)}` : `${nf(EXCH.length)} ta`;
-    $('#eOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>№</th><th>Mahsulot nomi</th><th class="num">Lotlarda</th><th></th></tr></thead><tbody>
-      ${rows.map((x, i) => `<tr><td class="muted c-hide">${i + 1}</td><td class="c-title">${esc(x.name)}</td><td class="num">${nf(x.used)}</td>
+    $('#eOut').innerHTML = `<div class="tablewrap"><table><thead><tr><th>№</th>${w ? '<th class="c-sel"></th>' : ''}<th>Mahsulot nomi</th><th class="num">Tugallangan</th><th class="num">Tugallanmagan</th><th></th></tr></thead><tbody>
+      ${rows.map((x, i) => `<tr>${w ? `<td class="c-sel"><input type="checkbox" data-em="${x.id}" aria-label="Birlashtirish uchun tanlash" ${EM.has(x.id) ? 'checked' : ''}></td>` : ''}<td class="c-title">${esc(x.name)}</td><td class="num">${nf(x.used)}</td><td class="num">${nf(x.open_used)}</td>
         <td class="nowrap">${w ? `<button class="btn small" data-ee="${x.id}">✎</button> <button class="btn small danger" data-ed="${x.id}">×</button>` : ''}</td></tr>`).join('')
-        || `<tr><td colspan="4" class="muted">${EXCH.length ? 'Hech narsa topilmadi' : 'Hozircha mahsulot yo\'q. "+ Mahsulot" yoki "Lotlardan yangilash" tugmasini bosing.'}</td></tr>`}
+        || `<tr><td colspan="5" class="muted">${EXCH.length ? 'Hech narsa topilmadi' : 'Hozircha mahsulot yo\'q. "+ Mahsulot" yoki "Lotlardan yangilash" tugmasini bosing.'}</td></tr>`}
       </tbody></table></div>`;
+    document.querySelectorAll('[data-em]').forEach(c => c.onchange = () => { c.checked ? EM.add(+c.dataset.em) : EM.delete(+c.dataset.em); mergeBar(); });
+    mergeBar();
     document.querySelectorAll('[data-ee]').forEach(b => b.onclick = () => form(EXCH.find(x => x.id == b.dataset.ee)));
     document.querySelectorAll('[data-ed]').forEach(b => b.onclick = async () => {
       const x = EXCH.find(v => v.id == b.dataset.ed);
@@ -789,6 +951,7 @@ async function exchprod() {
     });
   };
   $('#eQ').oninput = debounce(draw, 150);
+  $('#eMergeGo').onclick = mergeDialog;
   if ($('#eAdd')) $('#eAdd').onclick = () => form(null);
   if ($('#eSync')) $('#eSync').onclick = async () => { try { const r = await api('/exchange-products/sync', { method: 'POST' }); toast(r.added ? `${r.added} ta yangi mahsulot qo'shildi` : "Yangi mahsulot topilmadi (hammasi ro'yxatda)"); exchprod(); } catch (e) { toast(e.message); } };
   draw();
@@ -1052,5 +1215,5 @@ async function settings() {
   document.querySelectorAll('[data-u]').forEach(b => b.onclick = async () => { if (confirm('Foydalanuvchi o\'chirilsinmi?')) { await api('/users/' + b.dataset.u, { method: 'DELETE' }); settings(); } });
 }
 
-const VIEWS = { dashboard, mylots, lots, trend, margin, rank, products, exchprod, units, settings };
+const VIEWS = { dashboard, mylots, lots, openlots, trend, margin, rank, products, exchprod, units, settings };
 boot();
