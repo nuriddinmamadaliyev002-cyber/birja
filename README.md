@@ -16,6 +16,9 @@ Ixtiyoriy: `npm run demo` — 700 ta DEMO lot (admin paneldan o'chiriladi).
 Qatorni tahrirlash: "Lotlar bazasi" jadvalida qator oxiridagi ✎ tugmasi (admin va analyst). Tahrirlangan demo lot haqiqiy hisoblanadi ("Demoni o'chirish" uni o'chirmaydi). Lot raqami boshqa lotnikiga o'zgartirilsa, saqlanmaydi.
 Qadoq hajmi o'lchov birligidan olinadi ("Qop (30 kg)" → 30), 1 kg narx = yakuniy narx / kg.
 
+## Shartnoma summasi
+"Lotlar bazasi" jadvalida "Summa" ustuni: Hajm × Yakuniy narx (1 birlik narxi). Bazada saqlanmaydi, har safar hisoblanadi, shuning uchun narx yoki hajm tahrirlansa o'zi to'g'rilanadi. Ustun bo'yicha saralash mumkin; hajm yoki narx bo'sh lotlarda "—". "+ Yangi lot" oynasida summa jonli ko'rsatiladi. "Mening lotlarim" → g'olib lotda "Yakuniy narx × Miqdor" ko'rsatiladi va tugma bilan "O'tkazib berilishi kerak summa" ga qo'yiladi (o'zi o'zgartirmaydi).
+
 ## O'lchov birliklari (nomenklatura)
 Menyu: O'lchov birliklari. "Lotlar bazasi" → "+ Yangi lot" dagi «O'lchov birligi» dropdown'i shu ro'yxatdan to'ladi.
 - Nomi ("Qop (25 kg)") va "1 birlik necha kg/litr" (nomda kg yozilgan bo'lsa o'zi aniqlanadi). 1 kg narxi shu hajmdan hisoblanadi.

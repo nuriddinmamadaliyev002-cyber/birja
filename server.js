@@ -142,13 +142,13 @@ app.get('/api/filters', auth, ah(async (req, res) => {
 }));
 
 /* ---------------- lots ---------------- */
-const SORTS = { date: 'date', product: 'product', final_price: 'final_price', price_per_kg: 'price_per_kg', bids: 'bids', discount: '(start_price-final_price)/NULLIF(start_price,0)' };
+const SORTS = { date: 'date', product: 'product', final_price: 'final_price', price_per_kg: 'price_per_kg', bids: 'bids', total_sum: 'final_price*volume', discount: '(start_price-final_price)/NULLIF(start_price,0)' };
 app.get('/api/lots', auth, ah(async (req, res) => {
   const { where, args } = lotFilter(req.query);
   const page = Math.max(1, +req.query.page || 1), limit = Math.min(200, +req.query.limit || 50);
   const sort = SORTS[req.query.sort] || 'date', dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
   const total = (await db.get(`SELECT COUNT(*) c FROM lots ${where}`, args)).c;
-  const rows = await db.all(`SELECT *, ${R(DISC, 1)} AS discount_pct FROM lots ${where} ORDER BY ${sort} ${dir} NULLS LAST, id DESC LIMIT ? OFFSET ?`,
+  const rows = await db.all(`SELECT *, final_price*volume AS total_sum, ${R(DISC, 1)} AS discount_pct FROM lots ${where} ORDER BY ${sort} ${dir} NULLS LAST, id DESC LIMIT ? OFFSET ?`,
     [...args, limit, (page - 1) * limit]);
   res.json({ total, page, limit, rows });
 }));
